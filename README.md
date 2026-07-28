@@ -91,10 +91,13 @@ with the most history is primary and carries the GitHub metadata; the rest are
 marked `⧉` and report no issue count, so four copies of one repo can't report its
 860 issues four times. They're prime candidates for hiding.
 
-**Type scales with the tile.** A big box gets a readable label rather than a
-billboard; a sliver gets 5px, still a legible shape and still clickable for the full
-metadata. Width is checked against the name's own length, height against the box, so
-labels never spill into the row below.
+**Type scales with the box — group headers included.** A big block gets a readable
+label rather than a billboard; a sliver gets 5px, still a legible shape and still
+clickable for the full metadata. Width is checked against the name's own length,
+height against the box, so labels never spill into the row below. A group header
+never exceeds a third of the block it labels, and if its count pill would push the
+org name into an ellipsis the pill is dropped instead — the count stays in the
+tooltip.
 
 **Anything too small to draw is named, not dropped.** A silent omission reads as
 "nothing there", so the legend reports the count and lists them on hover.

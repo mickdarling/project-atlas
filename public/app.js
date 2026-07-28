@@ -438,18 +438,40 @@ function renderTreemap() {
     box.className = 'group';
     box.style.cssText = `left:${x}px;top:${y}px;width:${gw}px;height:${gh}px`;
 
+    /* Group headers scale like tile labels do. A one-repo org in a sliver
+     * should not spend 24px and 12pt on its name — that reads as a bug and
+     * steals the room its own tiles need. */
+    const gName = g.node.name;
+    const gCount = String(g.node.repos.length);
+    const headSize = Math.max(5, Math.min(12,
+      Math.min((gw - 12) / (0.58 * Math.max(gName.length + 2, 6)), gh * 0.22)));
+    // …and never let the label eat the block it is labelling.
+    const headH = Math.max(8, Math.min(GROUP_HEAD, Math.round(headSize * 2), Math.round(gh * 0.34)));
+    // The count is a nicety; the org's name is not. If the pill would push the
+    // name into an ellipsis, drop the pill — the count is still in the tooltip.
+    const padPx = headSize < 8 ? 3 : 9;
+    const pillPx = gCount.length * 0.6 * headSize * 0.82 + 16;
+    const namePx = 0.58 * headSize * gName.length;
+    const showCount = headSize >= 8.5 && gw >= 80
+      && padPx * 2 + 7 + pillPx + namePx <= gw;
+
     const head = document.createElement('div');
     head.className = 'group-head';
+    head.style.cssText =
+      `height:${headH}px;font-size:${headSize.toFixed(1)}px;` +
+      `padding:0 ${padPx}px;gap:${headSize < 8 ? 3 : 7}px`;
     head.innerHTML =
-      `<span>${escapeHTML(g.node.name)}</span>` +
-      `<span class="group-count">${g.node.repos.length}</span>`;
+      `<span class="group-name">${escapeHTML(gName)}</span>` +
+      (showCount ? `<span class="group-count">${gCount}</span>` : '');
+    head.title = `${gName} — ${g.node.repos.length} projects`;
     box.appendChild(head);
 
+    const pad = headSize < 8 ? 2 : GROUP_PAD;
     const inner = {
-      x: GROUP_PAD,
-      y: GROUP_HEAD,
-      w: gw - GROUP_PAD * 2,
-      h: gh - GROUP_HEAD - GROUP_PAD,
+      x: pad,
+      y: headH,
+      w: gw - pad * 2,
+      h: gh - headH - pad,
     };
 
     if (inner.w > 4 && inner.h > 4) {
