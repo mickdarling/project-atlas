@@ -25,9 +25,10 @@ const state = {
     color: 'recency',
     hue: 'blue',
     size: 'sqrt-effort',
-    showHidden: false,
+    visibility: 'visible',
   },
   panelPinned: false,
+  undrawn: [],
 };
 
 /* -------------------------------------------------------- vocabulary */
@@ -64,6 +65,19 @@ const ISSUE_BINS = [
 ];
 
 const PRIORITY_LABEL = { 3: 'High', 2: 'Medium', 1: 'Low', 0: 'None' };
+
+/* Hide is "off my screen for now". Ignore is "this is not my project and I do
+ * not want it counted". Both must stay reachable — a one-way hide is a trap,
+ * because anything you file away becomes invisible to the tool that filed it. */
+const VISIBILITY = [
+  { id: 'visible', label: 'Showing', glyph: '👁', step: 6, key: null },
+  { id: 'hidden', label: 'Hidden', glyph: '◌', step: 3, key: 'h' },
+  { id: 'ignored', label: 'Ignored', glyph: '⊘', step: 1, key: 'i' },
+];
+
+function visibilityOf(r) {
+  return verdict(r.key).visibility || 'visible';
+}
 
 const RECENCY_BINS = [
   { max: 7, label: 'past week' },
@@ -163,6 +177,22 @@ function verdict(key) {
   return state.verdicts[key] || {};
 }
 
+/* Detection gets provenance wrong sometimes — GitHub does not flag every
+ * clone as a fork (docker-zulip is nobody's fork by the API and 1,000 commits
+ * of somebody else's work by any honest reading). Your override wins. */
+function provenanceOf(r) {
+  return verdict(r.key).provenance || r.provenance;
+}
+
+function provRec(r) {
+  return PROVENANCE.find((x) => x.id === provenanceOf(r)) || PROVENANCE[3];
+}
+
+/** Commits credited to you, after any manual disowning. */
+function effortOf(r) {
+  return verdict(r.key).disown ? 0 : (r.effort || 0);
+}
+
 /* ------------------------------------------------------------ scoring */
 
 function sizeValue(r) {
@@ -174,7 +204,7 @@ function sizeValue(r) {
     case 'sqrt-files': return Math.sqrt(Math.max(r.trackedFiles || 0, 1));
     case 'equal': return 1;
     case 'sqrt-effort':
-    default: return Math.sqrt(Math.max(r.effort || 0, 1));
+    default: return Math.sqrt(Math.max(effortOf(r), 1));
   }
 }
 
@@ -199,13 +229,13 @@ function colorFor(r) {
       return s ? fromRamp(hue, s.step) : NEUTRAL();
     }
     case 'provenance': {
-      const p = PROVENANCE.find((x) => x.id === r.provenance) || PROVENANCE[3];
+      const p = provRec(r);
       return { bg: cssVar(p.varName), ink: cssVar(p.ink) };
     }
     // Bivariate: hue says whose it is, lightness says how recently you touched
     // it. Only three hues, which is exactly the all-pairs ceiling.
     case 'prov-recency': {
-      const p = PROVENANCE.find((x) => x.id === r.provenance) || PROVENANCE[3];
+      const p = provRec(r);
       const step = recencyStep(r);
       return step === null ? NEUTRAL() : fromRamp(p.hue, step);
     }
@@ -228,7 +258,7 @@ function colorFor(r) {
 function groupOf(r) {
   switch (state.filters.group) {
     case 'provenance': {
-      const p = PROVENANCE.find((x) => x.id === r.provenance) || PROVENANCE[3];
+      const p = provRec(r);
       return p.label;
     }
     case 'status': {
@@ -237,6 +267,10 @@ function groupOf(r) {
     }
     case 'presence': return PRESENCE_LABEL[r.presence] || r.presence;
     case 'language': return r.language || 'No language detected';
+    case 'visibility': {
+      const x = VISIBILITY.find((y) => y.id === visibilityOf(r));
+      return `${x.glyph} ${x.label}`;
+    }
     case 'none': return `All ${state.repos.length} projects`;
     case 'owner':
     default: return r.group || 'Unaffiliated';
@@ -256,15 +290,27 @@ function isStale(r) {
 
 /* ---------------------------------------------------------- filtering */
 
+function passesVisibility(r) {
+  const vis = visibilityOf(r);
+  switch (state.filters.visibility) {
+    case 'all': return true;
+    case 'parked': return vis !== 'visible';
+    case 'hidden': return vis === 'hidden';
+    case 'ignored': return vis === 'ignored';
+    case 'visible':
+    default: return vis === 'visible';
+  }
+}
+
 function visibleRepos() {
   const q = state.filters.search.trim().toLowerCase();
   return state.repos.filter((r) => {
-    const v = verdict(r.key);
-    if (v.hidden && !state.filters.showHidden) return false;
+    if (!passesVisibility(r)) return false;
     if (!q) return true;
+    const v = verdict(r.key);
     const hay = [
       r.name, r.owner, r.path, r.language, r.description, r.slug,
-      ...(r.topics || []), ...(v.tags || []), v.note,
+      ...(r.topics || []), ...(v.tags || []), v.note, v.hiddenReason,
     ].filter(Boolean).join(' ').toLowerCase();
     return hay.includes(q);
   });
@@ -339,9 +385,9 @@ function layoutInto(nodes, rect) {
 
 /* ------------------------------------------------------------- render */
 
-const GROUP_HEAD = 19;
-const GROUP_PAD = 3;
-const GROUP_GAP = 4;
+const GROUP_HEAD = 24;
+const GROUP_PAD = 4;
+const GROUP_GAP = 9; // gutter between organizations — structural, not decorative
 
 function render() {
   renderLegend();
@@ -355,6 +401,7 @@ function render() {
 function renderTreemap() {
   const host = $('#treemap');
   host.innerHTML = '';
+  state.undrawn = [];
   const repos = visibleRepos();
 
   if (!repos.length) {
@@ -410,12 +457,29 @@ function renderTreemap() {
       for (const item of layoutInto(nodes, inner)) {
         const tile = buildTile(item.node.repo, item.rect);
         if (tile) box.appendChild(tile);
+        else state.undrawn.push(item.node.repo);
       }
+    } else {
+      state.undrawn.push(...g.node.repos);
     }
     frag.appendChild(box);
   }
 
   host.appendChild(frag);
+  renderUndrawnNote();
+}
+
+/* A project too small to get a pixel is still a project. Saying so beats
+ * letting the map imply the portfolio is smaller than it is. */
+function renderUndrawnNote() {
+  const el = $('#undrawn');
+  if (!el) return;
+  const n = state.undrawn.length;
+  if (!n) { el.hidden = true; return; }
+  el.hidden = false;
+  el.textContent = `${n} too small to draw — ${state.undrawn
+    .slice(0, 3).map((r) => r.name).join(', ')}${n > 3 ? '…' : ''}`;
+  el.title = state.undrawn.map((r) => r.name).join('\n');
 }
 
 function buildTile(r, rect) {
@@ -426,27 +490,42 @@ function buildTile(r, rect) {
   const v = verdict(r.key);
   const { bg, ink } = colorFor(r);
 
+  const vis = visibilityOf(r);
   const el = document.createElement('div');
   el.className = 'tile';
   if (r.presence !== 'both') el.classList.add(`presence-${r.presence}`);
-  if (v.hidden) el.classList.add('is-hidden-row');
+  if (vis !== 'visible') el.classList.add(`is-${vis}-row`);
   if (r.key === state.selectedKey) el.classList.add('is-selected');
-  if (w < 34 || h < 22) el.classList.add('is-tiny');
-  else if (h < 38) el.classList.add('is-small');
+
+  /* Type scales with the tile rather than switching on and off. A big tile
+   * gets a readable label, not a billboard; a sliver gets 5px, which is
+   * still a legible shape and still clickable for the full metadata.
+   * Both dimensions constrain it: width against the name's own length
+   * (allowing about two wrapped lines), height against the box. */
+  const len = Math.max((r.name || '').length, 4);
+  const nameSize = Math.max(5, Math.min(13, Math.min((w * 1.9) / (0.56 * len), h * 0.40)));
+  const subSize = Math.max(4.5, nameSize * 0.8);
+  const pad = nameSize < 8 ? '1px 2px' : '3px 5px';
+  const showText = w >= 13 && h >= 8;
+  // Only promise a second line if there is room for it under the first.
+  const showSub = showText && h >= nameSize * 2.5 + subSize + 4 && w >= 34;
+  const showFlags = showText && w >= 40 && h >= 26;
 
   el.style.cssText =
     `left:${rect.x}px;top:${rect.y}px;width:${w}px;height:${h}px;` +
-    `background:${bg};color:${ink}`;
+    `padding:${pad};background:${bg};color:${ink}`;
   el.dataset.key = r.key;
   el.tabIndex = 0;
   el.setAttribute('role', 'button');
   el.setAttribute('aria-label',
     `${r.name}, ${r.owner || 'no owner'}, ${num(r.commits)} commits, last work ${fmtAgo(r.lastActivity)}` +
-    (v.status ? `, marked ${v.status}` : '') + (v.hidden ? ', hidden' : ''));
+    (v.status ? `, marked ${v.status}` : '') + (vis !== 'visible' ? `, ${vis}` : ''));
 
   const flags = [
+    vis !== 'visible' ? VISIBILITY.find((x) => x.id === vis).glyph : '',
     statusGlyph(r),
     v.priority ? ['', '▁', '▄', '█'][v.priority] : '',
+    v.provenance ? '✎' : '',
     r.duplicateOf ? '⧉' : '',
     r.dirtyFiles ? '✱' : '',
     r.unpushedCommits ? '↑' : '',
@@ -458,12 +537,13 @@ function buildTile(r, rect) {
   const byIssues = /issues/.test(state.filters.size) || state.filters.color === 'issues';
   const lead = byIssues
     ? `${num(r.openIssues)} iss`
-    : `${num(state.filters.size === 'sqrt-effort' ? r.effort : r.commits)}`;
+    : `${num(state.filters.size === "sqrt-effort" ? effortOf(r) : r.commits)}`;
 
-  el.innerHTML =
-    `<div class="tile-name">${escapeHTML(r.name)}</div>` +
-    `<div class="tile-sub">${lead} · ${escapeHTML(fmtAgo(r.lastActivity))}</div>` +
-    (flags ? `<div class="tile-flags">${escapeHTML(flags)}</div>` : '');
+  el.innerHTML = showText
+    ? `<div class="tile-name" style="font-size:${nameSize.toFixed(1)}px">${escapeHTML(r.name)}</div>` +
+      (showSub ? `<div class="tile-sub" style="font-size:${subSize.toFixed(1)}px">${lead} · ${escapeHTML(fmtAgo(r.lastActivity))}</div>` : '') +
+      (flags && showFlags ? `<div class="tile-flags" style="font-size:${Math.min(10, subSize).toFixed(1)}px">${escapeHTML(flags)}</div>` : '')
+    : '';
 
   return el;
 }
@@ -476,7 +556,7 @@ function escapeHTML(s) {
 /* ------------------------------------------------------------- legend */
 
 function renderLegend() {
-  const host = $('#legend');
+  const host = $('#legend-body');
   const parts = [];
   const mode = state.filters.color;
 
@@ -558,6 +638,7 @@ const TABLE_COLS = [
   { key: 'openPRs', label: 'PRs', num: true },
   { key: 'status', label: 'Status' },
   { key: 'priority', label: 'Priority' },
+  { key: 'visibility', label: 'Showing' },
   { key: 'tags', label: 'Tags' },
 ];
 
@@ -575,11 +656,12 @@ function renderTable() {
   $('#table-body').innerHTML = rows.map((r) => {
     const v = verdict(r.key);
     const s = STATUSES.find((x) => x.id === v.status);
-    const p = PROVENANCE.find((x) => x.id === r.provenance) || PROVENANCE[3];
+    const p = provRec(r);
+    const x = VISIBILITY.find((y) => y.id === visibilityOf(r));
     return `<tr data-key="${escapeHTML(r.key)}">
-      <td>${escapeHTML(r.name)}${v.hidden ? ' <span class="muted">(hidden)</span>' : ''}</td>
+      <td>${escapeHTML(r.name)}${r.duplicateOf ? ' <span class="muted">⧉ copy</span>' : ''}</td>
       <td>${escapeHTML(r.owner || '—')}</td>
-      <td>${p.glyph} ${escapeHTML(p.label)}</td>
+      <td>${p.glyph} ${escapeHTML(p.label)}${v.provenance ? ' ✎' : ''}</td>
       <td>${escapeHTML(PRESENCE_LABEL[r.presence] || r.presence)}</td>
       <td class="num">${num(r.commits)}</td>
       <td>${escapeHTML(fmtAgo(r.lastActivity))}</td>
@@ -587,6 +669,7 @@ function renderTable() {
       <td class="num">${num(r.openPRs)}</td>
       <td>${s ? `${s.glyph} ${escapeHTML(s.label)}` : '—'}</td>
       <td>${escapeHTML(PRIORITY_LABEL[v.priority || 0])}</td>
+      <td>${x.glyph} ${escapeHTML(x.label)}${v.hiddenReason ? ` <span class="muted">— ${escapeHTML(v.hiddenReason)}</span>` : ''}</td>
       <td>${escapeHTML((v.tags || []).join(', ') || '—')}</td>
     </tr>`;
   }).join('');
@@ -594,7 +677,14 @@ function renderTable() {
 
 function tableValue(r, col) {
   const v = verdict(r.key);
-  if (col === 'status') return v.status || '';
+  // Sort by meaningful rank, not alphabetically: "Active" before "Dead",
+  // "Ignored" grouped at one end.
+  if (col === 'status') {
+    const s = STATUSES.findIndex((x) => x.id === v.status);
+    return s === -1 ? -1 : STATUSES.length - s;
+  }
+  if (col === 'visibility') return VISIBILITY.findIndex((x) => x.id === visibilityOf(r));
+  if (col === 'provenance') return provenanceOf(r);
   if (col === 'priority') return v.priority || 0;
   if (col === 'tags') return (v.tags || []).join(',');
   return r[col];
@@ -609,7 +699,7 @@ function openPanel(key) {
   const v = verdict(key);
 
   const stale = isStale(r);
-  const p = PROVENANCE.find((x) => x.id === r.provenance) || PROVENANCE[3];
+  const p = provRec(r);
 
   $('#panel-body').innerHTML = `
     <h2>${escapeHTML(r.name)}</h2>
@@ -656,15 +746,33 @@ function openPanel(key) {
     </div>
 
     <div class="panel-section">
-      <h3>Hide from the map</h3>
-      <div class="seg">
-        <button type="button" id="btn-hide" aria-pressed="${!!v.hidden}">
-          ${v.hidden ? '◌ Hidden' : 'Hide this'}</button>
+      <h3>Showing</h3>
+      <div class="seg" id="seg-visibility">
+        ${VISIBILITY.map((x) => `<button type="button" data-visibility="${x.id}"
+          aria-pressed="${visibilityOf(r) === x.id}">${x.glyph} ${x.label}</button>`).join('')}
       </div>
-      ${v.hidden ? `<div style="margin-top:7px">
-        <input type="text" id="hide-reason" placeholder="Why hidden? (optional)"
+      <p class="seg-help">Hidden is “off my screen for now”. Ignored is “not my project,
+      stop counting it”. Both stay reachable — set <em>Showing</em> in the toolbar to
+      <em>Only hidden + ignored</em>, or sort the table by this column.</p>
+      ${visibilityOf(r) !== 'visible' ? `<div style="margin-top:7px">
+        <input type="text" id="hide-reason" placeholder="Why? (searchable)"
                value="${escapeHTML(v.hiddenReason || '')}" list="tag-suggestions">
       </div>` : ''}
+    </div>
+
+    <div class="panel-section">
+      <h3>Provenance ${v.provenance ? '<span class="override-flag">✎ overridden</span>' : ''}</h3>
+      <div class="seg" id="seg-provenance">
+        ${PROVENANCE.slice(0, 3).map((p) => `<button type="button" data-provenance="${p.id}"
+          aria-pressed="${provenanceOf(r) === p.id}">
+          <span class="dot" style="background:var(${p.varName})"></span>${p.glyph} ${p.label}</button>`).join('')}
+        <button type="button" data-provenance="" aria-pressed="${!v.provenance}">Auto-detect</button>
+      </div>
+      <p class="seg-help">Detected as <strong>${escapeHTML((PROVENANCE.find((x) => x.id === r.provenance) || PROVENANCE[3]).label)}</strong>${r.isFork ? ' (GitHub says fork)' : ''}.</p>
+      <label class="check-row">
+        <input type="checkbox" id="chk-disown" ${v.disown ? 'checked' : ''}>
+        <span>Don’t count its ${num(r.effort)} commits as my work</span>
+      </label>
     </div>
 
     <div class="panel-section">
@@ -752,8 +860,24 @@ function wirePanel(r) {
     b.addEventListener('click', () => setVerdict(r, { priority: +b.dataset.priority || undefined }));
   });
 
-  const hideBtn = body.querySelector('#btn-hide');
-  if (hideBtn) hideBtn.addEventListener('click', () => setVerdict(r, { hidden: !verdict(r.key).hidden }));
+  body.querySelectorAll('#seg-visibility button').forEach((b) => {
+    b.addEventListener('click', () => setVerdict(r, { visibility: b.dataset.visibility }));
+  });
+
+  body.querySelectorAll('#seg-provenance button').forEach((b) => {
+    b.addEventListener('click', () => {
+      const id = b.dataset.provenance || undefined;
+      // Calling something "not mine" almost always means its commits shouldn't
+      // count as yours — but you can uncheck that below if you did the work.
+      const patch = { provenance: id };
+      if (id && id !== 'mine') patch.disown = true;
+      if (id === 'mine') patch.disown = false;
+      setVerdict(r, patch);
+    });
+  });
+
+  const disown = body.querySelector('#chk-disown');
+  if (disown) disown.addEventListener('change', () => setVerdict(r, { disown: disown.checked }));
 
   const reason = body.querySelector('#hide-reason');
   if (reason) reason.addEventListener('change', () => setVerdict(r, { hiddenReason: reason.value }, false));
@@ -797,6 +921,7 @@ function setVerdict(r, patch, reopen = true) {
   const prev = state.verdicts[r.key] || {};
   const next = { ...prev, ...patch };
 
+  if (next.visibility === 'visible') delete next.visibility; // the default
   for (const k of Object.keys(next)) {
     if (next[k] === undefined || next[k] === null || next[k] === '' ||
         (Array.isArray(next[k]) && !next[k].length) || next[k] === false) {
@@ -851,6 +976,7 @@ const tip = () => $('#tooltip');
 function showTooltip(r, ev) {
   const v = verdict(r.key);
   const s = STATUSES.find((x) => x.id === v.status);
+  const vis = visibilityOf(r);
   tip().innerHTML =
     `<div class="tt-name">${escapeHTML(r.name)}</div>` +
     `<div class="muted">${escapeHTML(r.slug || r.path || '')}</div>` +
@@ -860,6 +986,7 @@ function showTooltip(r, ev) {
       <dt>Open</dt><dd>${num(r.openIssues)} issues · ${num(r.openPRs)} PRs</dd>
       <dt>Where</dt><dd>${escapeHTML(PRESENCE_LABEL[r.presence] || r.presence)}</dd>
       ${s ? `<dt>Status</dt><dd>${s.glyph} ${escapeHTML(s.label)}</dd>` : ''}
+      ${vis !== 'visible' ? `<dt>Showing</dt><dd>${escapeHTML(vis)}${v.hiddenReason ? ` — ${escapeHTML(v.hiddenReason)}` : ''}</dd>` : ''}
       ${v.priority ? `<dt>Priority</dt><dd>${escapeHTML(PRIORITY_LABEL[v.priority])}</dd>` : ''}
       ${r.dirtyFiles ? `<dt>Uncommitted</dt><dd>${num(r.dirtyFiles)} files</dd>` : ''}
       ${r.unpushedCommits ? `<dt>Unpushed</dt><dd>${num(r.unpushedCommits)} commits</dd>` : ''}
@@ -935,7 +1062,7 @@ function wireGlobal() {
   bind('#f-search', 'search');
   bind('#f-group', 'group');
   bind('#f-size', 'size');
-  bind('#f-hidden', 'showHidden');
+  bind('#f-visibility', 'visibility');
 
   $('#f-color').addEventListener('input', (e) => {
     state.filters.color = e.target.value;
@@ -957,11 +1084,12 @@ function wireGlobal() {
     render();
   });
 
-  // Clicking anywhere that isn't the map, the panel, or the controls dismisses
-  // an unpinned panel.
+  // Unpinned means: the panel belongs to the tile you clicked. Click anything
+  // that is not a tile — bare map, legend, toolbar, footer — and it goes away.
+  // Only the panel itself is exempt, so you can actually use its controls.
   document.addEventListener('mousedown', (e) => {
     if (state.panelPinned || $('#panel').hidden) return;
-    if (e.target.closest('#panel, .tile, .bar, #table-view')) return;
+    if (e.target.closest('#panel, .tile')) return;
     closePanel();
   });
 
@@ -994,7 +1122,8 @@ function wireGlobal() {
       '2': () => setVerdict(r, { priority: 2 }),
       '3': () => setVerdict(r, { priority: 3 }),
       '0': () => setVerdict(r, { priority: undefined }),
-      h: () => setVerdict(r, { hidden: !verdict(r.key).hidden }),
+      h: () => setVerdict(r, { visibility: visibilityOf(r) === 'hidden' ? 'visible' : 'hidden' }),
+      i: () => setVerdict(r, { visibility: visibilityOf(r) === 'ignored' ? 'visible' : 'ignored' }),
       p: () => setPinned(!state.panelPinned),
     };
     for (const s of STATUSES) map[s.key] = () => setVerdict(r, { status: s.id });
@@ -1029,6 +1158,16 @@ function migrateVerdicts(verdicts, repos) {
   for (const r of repos) {
     if (r.slug && r.isPrimaryClone) primaryBySlug.set(`gh:${r.slug}`, r.key);
   }
+  // hidden:true predates the visible/hidden/ignored model. Carry it over
+  // rather than letting a boolean that no longer means anything drop things
+  // you deliberately filed away back onto the map.
+  for (const v of Object.values(verdicts)) {
+    if (v.hidden !== undefined) {
+      if (v.hidden && !v.visibility) v.visibility = 'hidden';
+      delete v.hidden;
+    }
+  }
+
   let moved = 0;
   for (const oldKey of Object.keys(verdicts)) {
     if (live.has(oldKey)) continue;

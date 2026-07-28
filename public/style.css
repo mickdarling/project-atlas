@@ -34,6 +34,12 @@
   --serious-ink: #0b0b0b; --critical-ink: #ffffff;
 
   --neutral: #d8d7d1; --neutral-ink: #0b0b0b;
+
+  /* The gutter between organizations. Deliberately further from the group
+     surface than the page plane is — it is doing structural work, not
+     decoration: it is the only thing separating one org's block from the next. */
+  --gutter: #dcdad2;
+  --group-edge: #a9a79f;
 }
 
 :root[data-theme="dark"] {
@@ -61,6 +67,9 @@
   --serious-ink: #0b0b0b; --critical-ink: #ffffff;
 
   --neutral: #383835; --neutral-ink: #ffffff;
+
+  --gutter: #000000;
+  --group-edge: #55544e;
 }
 
 * { box-sizing: border-box; }
@@ -160,6 +169,18 @@ body {
 .legend-ramp .legend-swatch:first-child { border-radius: 3px 0 0 3px; }
 .legend-ramp .legend-swatch:last-child { border-radius: 0 3px 3px 0; }
 .legend-note { color: var(--text-muted); }
+#legend-body { display: contents; }
+.undrawn {
+  margin-left: auto;
+  padding: 2px 8px;
+  border-radius: 20px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--serious);
+  background: var(--page);
+  color: var(--text-secondary);
+  white-space: nowrap;
+  cursor: help;
+}
 
 /* -------------------------------------------------------------- stage */
 
@@ -177,7 +198,8 @@ main#stage {
   flex: 1 1 auto;
   min-height: 0;
   min-width: 0;
-  padding: 8px;
+  padding: 7px;
+  background: var(--gutter);
   outline: none;
 }
 main#stage:focus-visible { box-shadow: inset 0 0 0 2px var(--series-1); }
@@ -186,27 +208,38 @@ main#stage:focus-visible { box-shadow: inset 0 0 0 2px var(--series-1); }
 
 .group {
   position: absolute;
-  border: 1px solid var(--border);
-  border-radius: 7px;
+  border: 1px solid var(--group-edge);
+  border-radius: 8px;
   background: var(--surface-1);
   overflow: hidden;
 }
 .group-head {
   position: absolute;
   inset: 0 0 auto 0;
-  height: 19px;
+  height: 24px;
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 0 7px;
-  font-size: 11px;
-  font-weight: 600;
+  gap: 7px;
+  padding: 0 9px;
+  font-size: 12px;
+  font-weight: 700;
   letter-spacing: 0.01em;
-  color: var(--text-secondary);
+  color: var(--text-primary);
+  background: var(--surface-1);
+  border-bottom: 1px solid var(--group-edge);
   white-space: nowrap;
   overflow: hidden;
 }
-.group-head .group-count { font-weight: 400; color: var(--text-muted); }
+.group-head .group-count {
+  font-weight: 600;
+  font-size: 10px;
+  color: var(--text-secondary);
+  background: var(--page);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 0 6px;
+  font-variant-numeric: tabular-nums;
+}
 
 .tile {
   position: absolute;
@@ -219,37 +252,41 @@ main#stage:focus-visible { box-shadow: inset 0 0 0 2px var(--series-1); }
 }
 .tile:hover { box-shadow: inset 0 0 0 2px var(--text-primary); z-index: 3; }
 .tile.is-selected { box-shadow: inset 0 0 0 3px var(--text-primary); z-index: 4; }
-.tile.is-hidden-row { opacity: 0.4; }
+.tile.is-hidden-row { opacity: 0.45; }
+.tile.is-ignored-row { opacity: 0.3; filter: grayscale(0.75); }
 
 /* presence as a border treatment, not a colour — keeps the colour channel
    free for the encoding the legend actually describes */
 .tile.presence-local-only { border-style: dashed; border-color: var(--text-primary); }
 .tile.presence-remote-only { border-style: dotted; border-color: var(--text-primary); }
 
+/* Font sizes are set per-tile in JS so they scale with the box. Everything
+   here is clipping discipline, so a long name can never spill into the row
+   below it. */
 .tile-name {
-  font-size: 11px;
   font-weight: 600;
-  line-height: 1.2;
+  line-height: 1.15;
   letter-spacing: -0.005em;
-  word-break: break-word;
+  overflow-wrap: anywhere;
+  overflow: hidden;
+  max-height: 2.3em;
 }
 .tile-sub {
-  font-size: 10px;
   opacity: 0.82;
   margin-top: 1px;
+  line-height: 1.1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   font-variant-numeric: tabular-nums;
 }
 .tile-flags {
   position: absolute;
   right: 3px;
   bottom: 2px;
-  font-size: 10px;
   line-height: 1;
   letter-spacing: 1px;
 }
-.tile.is-tiny { padding: 0; }
-.tile.is-tiny .tile-name, .tile.is-tiny .tile-sub, .tile.is-tiny .tile-flags { display: none; }
-.tile.is-small .tile-sub { display: none; }
 
 .empty-note {
   position: absolute;
@@ -370,6 +407,23 @@ main#stage:focus-visible { box-shadow: inset 0 0 0 2px var(--series-1); }
   font-weight: 600;
 }
 .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; flex: 0 0 auto; }
+
+.seg-help {
+  margin: 7px 0 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-muted);
+}
+.seg-help em { font-style: normal; color: var(--text-secondary); }
+.override-flag {
+  font-size: 10px; font-weight: 600; letter-spacing: 0;
+  text-transform: none; color: var(--serious); margin-left: 4px;
+}
+.check-row {
+  display: flex; align-items: center; gap: 7px;
+  margin-top: 9px; font-size: 12px; color: var(--text-secondary);
+  cursor: pointer;
+}
 
 .tag-list { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 7px; }
 .tag {

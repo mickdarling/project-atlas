@@ -91,6 +91,14 @@ with the most history is primary and carries the GitHub metadata; the rest are
 marked `⧉` and report no issue count, so four copies of one repo can't report its
 860 issues four times. They're prime candidates for hiding.
 
+**Type scales with the tile.** A big box gets a readable label rather than a
+billboard; a sliver gets 5px, still a legible shape and still clickable for the full
+metadata. Width is checked against the name's own length, height against the box, so
+labels never spill into the row below.
+
+**Anything too small to draw is named, not dropped.** A silent omission reads as
+"nothing there", so the legend reports the count and lists them on hover.
+
 **Borders carry provenance and location** so the color channel stays free:
 dashed = local only, dotted = not cloned. Corner glyphs: `✱` uncommitted changes,
 `↑` unpushed commits, `▤` archived, plus the status glyph and `!` priority marks.
@@ -111,9 +119,29 @@ Click any tile. Or select one and use the keyboard:
 | `s` | someday |
 | `d` | done |
 | `x` | dead |
-| `h` | hide (with an optional reason) |
+| `h` | hide — off my screen for now |
+| `i` | ignore — not my project, stop counting it |
 | `p` | pin the panel |
 | `esc` | close the panel |
+
+### Nothing you file away becomes unreachable
+
+A one-way hide is a trap: the moment you use it, the thing you filed becomes
+invisible to the tool that filed it, so you stop using it at all.
+
+So visibility is a **first-class, sortable field** — `visible` / `hidden` / `ignored`
+— not a boolean. The **Showing** control in the toolbar has `Only hidden + ignored`,
+`Only hidden`, and `Only ignored`. You can group the map by it, sort the table
+column by it, and the reason you typed when filing something is searchable. Hidden
+tiles dim; ignored tiles dim and desaturate.
+
+### Correcting provenance by hand
+
+Detection is not always right — GitHub doesn't flag `docker-zulip` as a fork, so it
+scored as 1,000 commits of your work. The panel's **Provenance** control overrides
+the detected value, and calling something not-yours ticks *don't count its commits as
+my work*, which drops its area to nothing. Untick it if you did do the work.
+Overridden tiles carry a `✎`.
 
 Status is ordinal — "how alive is this" — so it's one hue stepped by liveness rather
 than five competing hues, with the glyph carrying exact identity. Five adjacent

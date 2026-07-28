@@ -28,6 +28,7 @@
         <option value="status">Status</option>
         <option value="presence">Local vs remote</option>
         <option value="language">Language</option>
+        <option value="visibility">Hidden / ignored</option>
         <option value="none">Nothing (one big map)</option>
       </select>
     </label>
@@ -71,9 +72,15 @@
       </select>
     </label>
 
-    <label class="ctl ctl-check">
-      <input type="checkbox" id="f-hidden">
-      <span>Show hidden</span>
+    <label class="ctl">
+      <span>Showing</span>
+      <select id="f-visibility">
+        <option value="visible">Visible only</option>
+        <option value="all">Everything</option>
+        <option value="parked">Only hidden + ignored</option>
+        <option value="hidden">Only hidden</option>
+        <option value="ignored">Only ignored</option>
+      </select>
     </label>
 
     <div class="ctl-buttons">
@@ -84,7 +91,10 @@
   </div>
 </header>
 
-<div class="legend" id="legend" aria-live="polite"></div>
+<div class="legend">
+  <span id="legend-body" aria-live="polite"></span>
+  <span class="undrawn" id="undrawn" hidden></span>
+</div>
 
 <div class="workspace">
 <main id="stage" tabindex="0" aria-label="Project treemap">
@@ -99,7 +109,7 @@
         <th scope="col">Where</th><th scope="col" class="num">Commits</th>
         <th scope="col">Last work</th><th scope="col" class="num">Issues</th>
         <th scope="col" class="num">PRs</th><th scope="col">Status</th>
-        <th scope="col">Priority</th><th scope="col">Tags</th>
+        <th scope="col">Priority</th><th scope="col">Showing</th><th scope="col">Tags</th>
       </tr>
     </thead>
     <tbody id="table-body"></tbody>
@@ -122,7 +132,7 @@
   <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> priority · <kbd>0</kbd> none ·
   <kbd>a</kbd> active · <kbd>u</kbd> in use · <kbd>s</kbd> someday ·
   <kbd>d</kbd> done · <kbd>x</kbd> dead ·
-  <kbd>h</kbd> hide · <kbd>p</kbd> pin panel · <kbd>esc</kbd> close
+  <kbd>h</kbd> hide · <kbd>i</kbd> ignore · <kbd>p</kbd> pin panel · <kbd>esc</kbd> close
   <span class="save-state" id="save-state"></span>
 </footer>
 
