@@ -69,8 +69,24 @@ ceiling — a fourth could not be told apart reliably, so there isn't one.
 860 on `mcp-server` alone. If issues are where ideas land, this is the idea map.
 Size by issues too and the map reorganizes around thinking rather than typing.
 
-The **Palette** picker swaps the ramp hue across all single-hue modes — eight
-choices, and it hides itself for the modes where hue carries meaning.
+### Palettes: pick two colours
+
+The **Palette** control takes a low colour and a high colour — Red → Green,
+Red → Blue, Amber → Violet, or the same hue twice for a classic single-hue ramp.
+Nine anchors, so 81 combinations, and **all 81 pass validation in both light and
+dark**. Ramps are generated at runtime in OKLCH and snapped to a passing chroma:
+high chroma clips against the sRGB gamut at the ends, squashing the lightness steps
+together, so chroma walks down until the shape checks pass.
+
+The badge next to the picker runs the real checks — the same maths and the same
+Machado colour-vision matrices the offline validator uses — and says what it finds.
+Hover it for the numbers.
+
+**Red → Green is offered, and it is safe here**, which is not the usual answer. It
+works because lightness moves monotonically from end to end, so the ramp still reads
+as a ramp when hue is gone: the two ends measure ΔE 34.9 apart under protanopia.
+A red→green scale with *constant* lightness — the spreadsheet default — would be
+unreadable, and the badge would say so.
 
 ### Counting commits honestly
 
@@ -91,13 +107,44 @@ with the most history is primary and carries the GitHub metadata; the rest are
 marked `⧉` and report no issue count, so four copies of one repo can't report its
 860 issues four times. They're prime candidates for hiding.
 
-**Type scales with the box — group headers included.** A big block gets a readable
-label rather than a billboard; a sliver gets 5px, still a legible shape and still
-clickable for the full metadata. Width is checked against the name's own length,
-height against the box, so labels never spill into the row below. A group header
-never exceeds a third of the block it labels, and if its count pill would push the
-org name into an ellipsis the pill is dropped instead — the count stays in the
-tooltip.
+### Focus: pick what you want to see
+
+Click an organization's header and it expands to fill the map. Everything else
+**minimizes to a dock along the bottom** — not hidden, still named, one click from
+coming back. That is the difference between focus and a trapdoor: because the others
+are still on screen, you can add a second organization, and a third.
+
+Click a focused header to send it back to the dock; **show all** in the toolbar chip
+clears everything. Focus is remembered per grouping mode, because "DollhouseMCP"
+means nothing once you regroup by language. It is view state, so it lives in
+localStorage and never touches `verdicts.json`.
+
+### Type is fitted, not estimated
+
+A first guess is computed from measured glyph widths, then **the browser is asked
+what it actually did** and anything that overflowed is shrunk — reads and writes
+batched into separate phases so the whole map costs a handful of reflows rather than
+one per tile.
+
+This matters because no formula models CSS wrapping. `awesome-mcp-servers` in a 44px
+box wants five ragged lines where width ÷ box predicts three; hyphens are break
+opportunities and the last line of each run is short. Estimation was leaving labels
+clipped mid-word.
+
+At the 4px floor a box is simply too small to label, and the name is removed rather
+than cut off — the tile is still hoverable and clickable. Group headers get the same
+treatment, solved for the name and its count pill together.
+
+### Scale: normalized to what you're looking at
+
+Fixed age brackets flatten a set that is all recent or all ancient — everything lands
+in one bucket and the map goes one colour, which is what "everything's red" was.
+
+So **Scale → Auto** spreads the ramp across the projects actually on screen, using
+equal-frequency bins so every step gets used. Focus one org and the colours
+re-normalize to that org's own history — 176 projects becomes 58. The legend always
+names the real dates at the ends, so a colour still means something you can act on.
+**Scale → Fixed** restores absolute brackets.
 
 **Anything too small to draw is named, not dropped.** A silent omission reads as
 "nothing there", so the legend reports the count and lists them on hover.

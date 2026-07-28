@@ -121,6 +121,23 @@ body {
 }
 .ctl input[type="search"] { min-width: 190px; }
 
+.ctl .arrow { opacity: 0.55; }
+.hue-pair { display: flex; align-items: center; gap: 4px; }
+.hue-pair select { min-width: 92px; }
+.hue-pair #f-preset { min-width: 104px; }
+
+.palette-badge {
+  font-size: 11px;
+  padding: 5px 9px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  white-space: nowrap;
+  cursor: help;
+}
+.palette-badge.ok { color: var(--good); border-color: var(--good); }
+.palette-badge.warn { color: var(--serious); border-color: var(--serious); }
+.palette-badge.bad { color: var(--critical); border-color: var(--critical); }
+
 .ctl-check { flex-direction: row; align-items: center; gap: 6px; padding-bottom: 6px; }
 .ctl-check > span { font-size: 12px; color: var(--text-secondary); }
 
@@ -170,6 +187,39 @@ body {
 .legend-ramp .legend-swatch:last-child { border-radius: 0 3px 3px 0; }
 .legend-note { color: var(--text-muted); }
 #legend-body { display: contents; }
+.focus-chip {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 4px 2px 9px;
+  border-radius: 20px;
+  border: 1px solid var(--series-1);
+  color: var(--text-primary);
+  background: var(--page);
+  white-space: nowrap;
+}
+.focus-chip button {
+  font: inherit;
+  font-size: 11px;
+  color: var(--text-secondary);
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 2px 9px;
+  cursor: pointer;
+}
+.focus-chip button:hover { color: var(--text-primary); border-color: var(--baseline); }
+.focus-chip + .undrawn { margin-left: 0; }
+
+.group-head { cursor: pointer; }
+.group-head:hover { background: var(--page); }
+.group-head.is-focused {
+  color: var(--text-primary);
+  box-shadow: inset 3px 0 0 var(--series-1);
+}
+.group-head:focus-visible { outline: 2px solid var(--series-1); outline-offset: -2px; }
+
 .undrawn {
   margin-left: auto;
   padding: 2px 8px;
@@ -204,7 +254,48 @@ main#stage {
 }
 main#stage:focus-visible { box-shadow: inset 0 0 0 2px var(--series-1); }
 
-#treemap { position: relative; width: 100%; height: 100%; }
+main#stage { display: flex; flex-direction: column; }
+#treemap { position: relative; flex: 1 1 auto; min-height: 0; width: 100%; }
+
+/* Minimized groups. Focus hides nothing — it parks the rest here, still
+   labelled and still one click from coming back. */
+#dock {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 7px 2px 1px;
+  scrollbar-width: thin;
+}
+#dock[hidden] { display: none; }
+.dock-label {
+  flex: 0 0 auto;
+  font-size: 10px;
+  color: var(--text-muted);
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  padding-right: 2px;
+}
+.dock-chip {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  background: var(--surface-1);
+  border: 1px solid var(--group-edge);
+  border-radius: 6px;
+  padding: 4px 8px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.dock-chip:hover { color: var(--text-primary); border-color: var(--series-1); }
+.dock-chip .group-count { font-size: 10px; }
 
 .group {
   position: absolute;
@@ -274,7 +365,7 @@ main#stage:focus-visible { box-shadow: inset 0 0 0 2px var(--series-1); }
   letter-spacing: -0.005em;
   overflow-wrap: anywhere;
   overflow: hidden;
-  max-height: 2.3em;
+  /* max-height is set per-tile in JS to whatever the subtitle isn't using. */
 }
 .tile-sub {
   opacity: 0.82;

@@ -45,17 +45,30 @@
       </select>
     </label>
 
-    <label class="ctl" id="ctl-hue">
-      <span>Palette</span>
-      <select id="f-hue">
-        <option value="blue">Blue</option>
-        <option value="violet">Violet</option>
-        <option value="aqua">Aqua</option>
-        <option value="green">Green</option>
-        <option value="yellow">Amber</option>
-        <option value="orange">Orange</option>
-        <option value="magenta">Magenta</option>
-        <option value="red">Red</option>
+    <div class="ctl" id="ctl-hue">
+      <span>Palette — low <span class="arrow">→</span> high</span>
+      <div class="hue-pair">
+        <select id="f-hue" aria-label="Palette start colour"></select>
+        <select id="f-hue-to" aria-label="Palette end colour"></select>
+        <select id="f-preset" aria-label="Palette preset">
+          <option value="">Presets…</option>
+          <option value="red:green">Red → Green</option>
+          <option value="red:blue">Red → Blue</option>
+          <option value="red:aqua">Red → Aqua</option>
+          <option value="yellow:violet">Amber → Violet</option>
+          <option value="orange:blue">Orange → Blue</option>
+          <option value="blue:blue">Blue (single hue)</option>
+          <option value="grey:grey">Grey (single hue)</option>
+        </select>
+        <span id="palette-badge" class="palette-badge" tabindex="0"></span>
+      </div>
+    </div>
+
+    <label class="ctl" id="ctl-scale">
+      <span>Scale</span>
+      <select id="f-scale">
+        <option value="auto">Auto — spread this set</option>
+        <option value="fixed">Fixed — absolute age</option>
       </select>
     </label>
 
@@ -93,12 +106,14 @@
 
 <div class="legend">
   <span id="legend-body" aria-live="polite"></span>
+  <span class="focus-chip" id="focus-chip" hidden></span>
   <span class="undrawn" id="undrawn" hidden></span>
 </div>
 
 <div class="workspace">
 <main id="stage" tabindex="0" aria-label="Project treemap">
   <div id="treemap"></div>
+  <div id="dock" hidden aria-label="Minimized groups"></div>
 </main>
 
 <section id="table-view" hidden aria-label="Project table">
@@ -136,7 +151,7 @@
   <span class="save-state" id="save-state"></span>
 </footer>
 
-<script src="/ramps.js"></script>
+<script src="/palette.js"></script>
 <script src="/app.js"></script>
 </body>
 </html>

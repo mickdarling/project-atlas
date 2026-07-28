@@ -23,13 +23,56 @@ const state = {
     search: '',
     group: 'owner',
     color: 'recency',
-    hue: 'blue',
+    hue: 'red',
+    hueTo: 'aqua',
+    scale: 'auto',
     size: 'sqrt-effort',
     visibility: 'visible',
   },
   panelPinned: false,
   undrawn: [],
+  recencyScale: null,
+  /* Focus is additive and by inclusion: you pick the groups you want to see,
+   * and everything else steps aside. Empty set = show everything, which is
+   * the default and what you get back by clearing.
+   * Kept per grouping mode, because "DollhouseMCP" means nothing once you
+   * regroup by language. This is view state, not a judgment, so it lives in
+   * localStorage and never touches verdicts.json. */
+  focus: {},
 };
+
+function focusSet() {
+  const m = state.filters.group;
+  if (!state.focus[m]) state.focus[m] = new Set();
+  return state.focus[m];
+}
+
+function toggleFocus(name) {
+  const s = focusSet();
+  if (s.has(name)) s.delete(name); else s.add(name);
+  persistFocus();
+  closePanel();
+  render();
+}
+
+function clearFocus() {
+  focusSet().clear();
+  persistFocus();
+  render();
+}
+
+function persistFocus() {
+  const plain = {};
+  for (const [k, v] of Object.entries(state.focus)) if (v.size) plain[k] = [...v];
+  localStorage.setItem('atlas-focus', JSON.stringify(plain));
+}
+
+function restoreFocus() {
+  try {
+    const plain = JSON.parse(localStorage.getItem('atlas-focus') || '{}');
+    for (const [k, v] of Object.entries(plain)) state.focus[k] = new Set(v);
+  } catch { /* nothing saved yet */ }
+}
 
 /* -------------------------------------------------------- vocabulary */
 
@@ -48,10 +91,13 @@ const STATUSES = [
 /* Provenance IS categorical, and three is the documented ceiling for
  * all-pairs adjacency — which is exactly how many real values there are. */
 const PROVENANCE = [
-  { id: 'mine', label: 'Mine', glyph: '◆', hue: 'blue', varName: '--series-1', ink: '--series-1-ink' },
-  { id: 'fork', label: 'Fork of someone else', glyph: '⑂', hue: 'orange', varName: '--series-2', ink: '--series-2-ink' },
-  { id: 'external', label: "Clone of someone else's", glyph: '↓', hue: 'aqua', varName: '--series-3', ink: '--series-3-ink' },
-  { id: 'unknown', label: 'Unknown', glyph: '?', hue: 'blue', varName: '--neutral', ink: '--neutral-ink' },
+  // Each family drifts toward a neighbour across the ramp so a block of "mine"
+  // does not read as one flat wash of blue, while still staying recognisably
+  // its own family against the other two.
+  { id: 'mine', label: 'Mine', glyph: '◆', hue: 'blue', hueTo: 'violet', varName: '--series-1', ink: '--series-1-ink' },
+  { id: 'fork', label: 'Fork of someone else', glyph: '⑂', hue: 'yellow', hueTo: 'orange', varName: '--series-2', ink: '--series-2-ink' },
+  { id: 'external', label: "Clone of someone else's", glyph: '↓', hue: 'aqua', hueTo: 'green', varName: '--series-3', ink: '--series-3-ink' },
+  { id: 'unknown', label: 'Unknown', glyph: '?', hue: 'grey', hueTo: 'grey', varName: '--neutral', ink: '--neutral-ink' },
 ];
 
 const ISSUE_BINS = [
@@ -110,10 +156,99 @@ function themeName() {
   return document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light';
 }
 
-/** Steps of a validated single-hue ramp, index 0 = least, 6 = most. */
-function rampSteps(hue) {
-  const r = (window.ATLAS_RAMPS || {})[hue] || (window.ATLAS_RAMPS || {}).blue;
-  return r ? r[themeName()] : ['#888', '#888', '#888', '#888', '#888', '#888', '#888'];
+/** Steps of the active ramp, index 0 = least/oldest, 6 = most/newest. */
+const _rampCache = new Map();
+function rampSteps(hue, toHue) {
+  const from = hue || state.filters.hue;
+  const to = toHue || (hue ? hue : state.filters.hueTo) || from;
+  const key = `${from}>${to}|${themeName()}`;
+  let r = _rampCache.get(key);
+  if (!r) {
+    r = window.ATLAS_PALETTE.buildRamp(from, to, themeName());
+    _rampCache.set(key, r);
+  }
+  return r;
+}
+
+/** The ramp currently selected in the toolbar, both hues honoured. */
+function activeRamp() {
+  return rampSteps(state.filters.hue, state.filters.hueTo);
+}
+
+/* ---------------------------------------------------------- text fitting *
+ * Estimating character widths from a magic constant does not survive real
+ * names — "gstack" wrapped while "autoresearch" vanished. So measure the
+ * actual string in the actual font and solve for the largest size that
+ * fits the actual box. Everything below is measurement, not guesswork.
+ * -------------------------------------------------------------------- */
+
+const FONT_STACK = 'system-ui, -apple-system, "Segoe UI", sans-serif';
+const _ctx = document.createElement('canvas').getContext('2d');
+const _widthCache = new Map();
+
+/** Width of `text` at font-size 1px, for the given weight. Scales linearly. */
+function unitWidth(text, weight) {
+  const k = `${weight}|${text}`;
+  let w = _widthCache.get(k);
+  if (w === undefined) {
+    _ctx.font = `${weight} 100px ${FONT_STACK}`;
+    w = _ctx.measureText(text).width / 100;
+    _widthCache.set(k, w);
+  }
+  return w;
+}
+
+/**
+ * How many lines the browser will actually use.
+ *
+ * total-width ÷ box-width is not the answer: the browser breaks at word
+ * boundaries first, and repo names are full of hyphens. "elemental-surveys-
+ * research" in a 48px box wants five ragged lines where the ratio predicts
+ * three. So walk the break opportunities and pack greedily, exactly as the
+ * layout engine will.
+ */
+function wrapLines(text, boxW, size, weight) {
+  if (boxW <= 0) return 99;
+  // Break AFTER a hyphen, underscore, slash, dot or space — where CSS does.
+  const segs = String(text).split(/(?<=[-_./ ])/);
+  let lines = 1;
+  let cur = 0;
+  for (const seg of segs) {
+    const segW = unitWidth(seg, weight) * size;
+    if (segW > boxW) {
+      // Longer than the box on its own: overflow-wrap:anywhere splits it.
+      if (cur > 0) { lines++; cur = 0; }
+      lines += Math.ceil(segW / boxW) - 1;
+      cur = segW % boxW;
+    } else if (cur + segW <= boxW) {
+      cur += segW;
+    } else {
+      lines++;
+      cur = segW;
+    }
+  }
+  return lines;
+}
+
+/**
+ * Largest font size in [min,max] at which `text` fits `boxW`×`boxH`.
+ * Tiles wrap with overflow-wrap:anywhere, so a line can break at any glyph
+ * and the line count is simply total-width / box-width.
+ * Returns { size, lines, fits } — fits:false means even `min` overflows,
+ * which the caller may still choose to render and clip.
+ */
+function fitText(text, boxW, boxH, opts = {}) {
+  const { min = 4, max = 13, lineH = 1.15, weight = 600, maxLines = 3 } = opts;
+  if (!text || boxW <= 0 || boxH <= 0) return { size: min, lines: 1, fits: false };
+  const lineCap = Math.max(1, Math.min(maxLines, Math.floor(boxH / (min * lineH))));
+
+  for (let s = max; s >= min; s -= 0.25) {
+    const lines = wrapLines(text, boxW, s, weight);
+    if (lines <= lineCap && lines * s * lineH <= boxH) {
+      return { size: +s.toFixed(2), lines, fits: true };
+    }
+  }
+  return { size: min, lines: wrapLines(text, boxW, min, weight), fits: false };
 }
 
 const _inkCache = new Map();
@@ -132,8 +267,9 @@ function inkOn(hex) {
   return ink;
 }
 
-function fromRamp(hue, step) {
-  const bg = rampSteps(hue)[Math.max(0, Math.min(6, step))];
+function fromRamp(step, hueFrom, hueTo) {
+  const steps = hueFrom ? rampSteps(hueFrom, hueTo || hueFrom) : activeRamp();
+  const bg = steps[Math.max(0, Math.min(6, step))];
   return { bg, ink: inkOn(bg) };
 }
 
@@ -214,19 +350,49 @@ function issueBin(n) {
   return ISSUE_BINS.length - 1;
 }
 
-/** Recency as a ramp step: 6 = touched this week, 0 = two years cold. */
+/* Fixed age brackets flatten a set that is all recent or all ancient — every
+ * tile lands in one bucket and the map goes one colour. So by default the
+ * scale is normalised to whatever you are actually looking at: equal-frequency
+ * bins over the visible set, which guarantees the full ramp gets used.
+ * The legend states the real dates at the boundaries so "green" still means
+ * something you can name. */
+function rebuildRecencyScale(repos) {
+  const times = repos
+    .map((r) => (r.lastActivity ? Date.parse(r.lastActivity) : null))
+    .filter((t) => t !== null && !Number.isNaN(t))
+    .sort((a, b) => a - b);
+  state.recencyScale = times.length ? times : null;
+}
+
+/** Recency as a ramp step: 6 = most recent in this set, 0 = oldest. */
 function recencyStep(r) {
-  const bin = recencyBin(r.lastActivity);
-  return bin === null ? null : RECENCY_BINS.length - 1 - bin;
+  if (state.filters.scale === 'fixed' || !state.recencyScale) {
+    const bin = recencyBin(r.lastActivity);
+    return bin === null ? null : RECENCY_BINS.length - 1 - bin;
+  }
+  if (!r.lastActivity) return null;
+  const t = Date.parse(r.lastActivity);
+  if (Number.isNaN(t)) return null;
+  const arr = state.recencyScale;
+  // Rank of this timestamp within the visible set -> equal-frequency bin.
+  let lo = 0, hi = arr.length;
+  while (lo < hi) { const mid = (lo + hi) >> 1; if (arr[mid] < t) lo = mid + 1; else hi = mid; }
+  return Math.max(0, Math.min(6, Math.floor((lo / Math.max(1, arr.length - 1)) * 6.999)));
+}
+
+/** Boundary dates of the auto scale, for the legend. */
+function recencyScaleLabels() {
+  const arr = state.recencyScale;
+  if (!arr || !arr.length) return null;
+  return { oldest: new Date(arr[0]).toISOString(), newest: new Date(arr[arr.length - 1]).toISOString() };
 }
 
 function colorFor(r) {
   const v = verdict(r.key);
-  const hue = state.filters.hue;
   switch (state.filters.color) {
     case 'status': {
       const s = STATUSES.find((x) => x.id === v.status);
-      return s ? fromRamp(hue, s.step) : NEUTRAL();
+      return s ? fromRamp(s.step) : NEUTRAL();
     }
     case 'provenance': {
       const p = provRec(r);
@@ -237,20 +403,20 @@ function colorFor(r) {
     case 'prov-recency': {
       const p = provRec(r);
       const step = recencyStep(r);
-      return step === null ? NEUTRAL() : fromRamp(p.hue, step);
+      return step === null ? NEUTRAL() : fromRamp(step, p.hue, p.hueTo);
     }
     case 'issues': {
       const bin = issueBin(r.openIssues);
-      return bin === null ? NEUTRAL() : fromRamp(hue, bin);
+      return bin === null ? NEUTRAL() : fromRamp(bin);
     }
     case 'priority': {
       const step = { 3: 6, 2: 4, 1: 2 }[v.priority];
-      return step === undefined ? NEUTRAL() : fromRamp(hue, step);
+      return step === undefined ? NEUTRAL() : fromRamp(step);
     }
     case 'recency':
     default: {
       const step = recencyStep(r);
-      return step === null ? NEUTRAL() : fromRamp(hue, step);
+      return step === null ? NEUTRAL() : fromRamp(step);
     }
   }
 }
@@ -390,11 +556,15 @@ const GROUP_PAD = 4;
 const GROUP_GAP = 9; // gutter between organizations — structural, not decorative
 
 function render() {
-  renderLegend();
   if ($('#btn-table').getAttribute('aria-pressed') === 'true') {
+    rebuildRecencyScale(visibleRepos());
+    renderLegend();
     renderTable();
     return;
   }
+  // renderTreemap rebuilds the scale from exactly what it draws — focus
+  // included — then renders the legend, so the ramp and its stated range
+  // always describe the same set.
   renderTreemap();
 }
 
@@ -416,11 +586,34 @@ function renderTreemap() {
     byGroup.get(g).push(r);
   }
 
-  const groups = [...byGroup.entries()].map(([name, rs]) => ({
+  let groups = [...byGroup.entries()].map(([name, rs]) => ({
     name,
     repos: rs,
     value: rs.reduce((s, r) => s + sizeValue(r), 0),
   }));
+
+  /* Focused groups expand to fill the map. The rest are NOT hidden — they
+   * minimize to the dock, still named and one click from coming back. That
+   * is what makes focus a selection rather than a trapdoor: you can always
+   * add a second organization, because you can still see it. */
+  const focus = focusSet();
+  const totalGroups = groups.length;
+  let parked = [];
+  if (focus.size) {
+    const kept = groups.filter((g) => focus.has(g.name));
+    if (kept.length) {
+      parked = groups.filter((g) => !focus.has(g.name));
+      groups = kept;
+    }
+  }
+  // Populate the dock BEFORE measuring, since it takes height from the map.
+  renderDock(parked);
+  renderFocusChip(groups.length, totalGroups);
+
+  // Normalise the recency ramp over exactly the projects being drawn: focus on
+  // one org and the colours re-spread across that org's own history.
+  rebuildRecencyScale(groups.flatMap((g) => g.repos));
+  renderLegend();
 
   const W = host.clientWidth;
   const H = host.clientHeight;
@@ -441,30 +634,28 @@ function renderTreemap() {
     /* Group headers scale like tile labels do. A one-repo org in a sliver
      * should not spend 24px and 12pt on its name — that reads as a bug and
      * steals the room its own tiles need. */
+    /* Same measured fit as the tiles, but solved for name AND count pill
+     * together — the count is part of the header, not a bonus, so it shrinks
+     * with the name rather than being dropped at an arbitrary threshold. */
     const gName = g.node.name;
     const gCount = String(g.node.repos.length);
-    const headSize = Math.max(5, Math.min(12,
-      Math.min((gw - 12) / (0.58 * Math.max(gName.length + 2, 6)), gh * 0.22)));
-    // …and never let the label eat the block it is labelling.
-    const headH = Math.max(8, Math.min(GROUP_HEAD, Math.round(headSize * 2), Math.round(gh * 0.34)));
-    // The count is a nicety; the org's name is not. If the pill would push the
-    // name into an ellipsis, drop the pill — the count is still in the tooltip.
-    const padPx = headSize < 8 ? 3 : 9;
-    const pillPx = gCount.length * 0.6 * headSize * 0.82 + 16;
-    const namePx = 0.58 * headSize * gName.length;
-    const showCount = headSize >= 8.5 && gw >= 80
-      && padPx * 2 + 7 + pillPx + namePx <= gw;
+    const head = fitHeader(gName, gCount, gw, gh);
+    const { size: headSize, headH, padPx, gapPx, showCount } = head;
 
-    const head = document.createElement('div');
-    head.className = 'group-head';
-    head.style.cssText =
-      `height:${headH}px;font-size:${headSize.toFixed(1)}px;` +
-      `padding:0 ${padPx}px;gap:${headSize < 8 ? 3 : 7}px`;
-    head.innerHTML =
+    const headEl = document.createElement('div');
+    headEl.className = 'group-head' + (focus.has(gName) ? ' is-focused' : '');
+    headEl.dataset.group = gName;
+    headEl.setAttribute('role', 'button');
+    headEl.tabIndex = 0;
+    headEl.style.cssText =
+      `height:${headH}px;font-size:${headSize}px;padding:0 ${padPx}px;gap:${gapPx}px`;
+    headEl.innerHTML =
       `<span class="group-name">${escapeHTML(gName)}</span>` +
       (showCount ? `<span class="group-count">${gCount}</span>` : '');
-    head.title = `${gName} — ${g.node.repos.length} projects`;
-    box.appendChild(head);
+    headEl.title = focus.has(gName)
+      ? `${gName} — ${g.node.repos.length} projects. Click to minimize it to the dock.`
+      : `${gName} — ${g.node.repos.length} projects. Click to focus; the rest minimize to the dock.`;
+    box.appendChild(headEl);
 
     const pad = headSize < 8 ? 2 : GROUP_PAD;
     const inner = {
@@ -488,7 +679,102 @@ function renderTreemap() {
   }
 
   host.appendChild(frag);
+  correctOverflow(host);
   renderUndrawnNote();
+}
+
+/**
+ * Estimating how CSS will wrap a string is a losing game — break rules,
+ * hyphenation, kerning and ragged edges all conspire, and the estimate was
+ * running 1–2 lines short on names like "awesome-mcp-servers". So the
+ * estimate is only the opening guess: measure what the browser actually did
+ * and shrink whatever overflowed.
+ *
+ * Reads and writes are batched into separate phases, so this costs a handful
+ * of reflows for the whole map rather than one per tile.
+ */
+function correctOverflow(host, maxPasses = 6) {
+  const names = [...host.querySelectorAll('.tile-name')];
+  const heads = [...host.querySelectorAll('.group-head')];
+
+  for (let pass = 0; pass < maxPasses; pass++) {
+    // ---- read phase: no mutation, so layout is computed once ----
+    const work = [];
+    for (const el of names) {
+      if (el.dataset.ok) continue;
+      const over = el.scrollHeight - el.clientHeight;
+      if (over > 0.5 && el.clientHeight > 0) {
+        work.push({ el, ratio: el.clientHeight / el.scrollHeight, kind: 'tile' });
+      } else {
+        el.dataset.ok = '1';
+      }
+    }
+    for (const head of heads) {
+      if (head.dataset.ok) continue;
+      const name = head.querySelector('.group-name');
+      const over = name.scrollWidth - name.clientWidth;
+      if (over > 0.5 && name.clientWidth > 0) {
+        work.push({ el: head, name, ratio: name.clientWidth / name.scrollWidth, kind: 'head' });
+      } else {
+        head.dataset.ok = '1';
+      }
+    }
+    if (!work.length) break;
+
+    // ---- write phase ----
+    for (const w of work) {
+      const cur = parseFloat(w.el.style.fontSize);
+      // Ease toward the measured ratio rather than jumping to it: overshooting
+      // makes tiny text on tiles that only just overflowed.
+      const next = Math.max(4, +(cur * Math.max(0.55, Math.sqrt(w.ratio) * 0.97)).toFixed(2));
+      if (next >= cur - 0.01) { w.el.dataset.ok = '1'; continue; }
+      // Font only. The header's height is already baked into the tile layout
+      // below it, so changing it here would leave a gap or an overlap.
+      w.el.style.fontSize = `${next}px`;
+    }
+  }
+
+  /* Anything still overflowing has hit the 4px floor: the box is simply too
+   * small to label. A name cut off mid-word is worse than no name — the tile
+   * is still hoverable and clickable, and the tooltip has everything. */
+  for (const el of names) {
+    if (el.scrollHeight > el.clientHeight + 0.5) {
+      el.style.display = 'none';
+      const sub = el.parentElement.querySelector('.tile-sub');
+      if (sub) sub.style.display = 'none';
+    }
+  }
+}
+
+function renderDock(parked) {
+  const dock = $('#dock');
+  if (!dock) return;
+  if (!parked.length) { dock.hidden = true; dock.innerHTML = ''; return; }
+  dock.hidden = false;
+  dock.innerHTML =
+    `<span class="dock-label">Minimized</span>` +
+    parked
+      .slice()
+      .sort((a, b) => b.repos.length - a.repos.length)
+      .map((g) => `<button type="button" class="dock-chip" data-group="${escapeHTML(g.name)}"
+        title="Bring ${escapeHTML(g.name)} back into focus">${escapeHTML(g.name)}
+        <span class="group-count">${g.repos.length}</span></button>`)
+      .join('');
+}
+
+function renderFocusChip(shown, total) {
+  const el = $('#focus-chip');
+  if (!el) return;
+  const s = focusSet();
+  if (!s.size) { el.hidden = true; return; }
+  el.hidden = false;
+  el.innerHTML =
+    `<span>Focused on ${shown} of ${total}: ${escapeHTML([...s].join(', '))}</span>` +
+    `<button type="button" id="focus-clear" aria-label="Show all groups">show all</button>`;
+  el.querySelector('#focus-clear').addEventListener('click', (e) => {
+    e.stopPropagation();
+    clearFocus();
+  });
 }
 
 /* A project too small to get a pixel is still a project. Saying so beats
@@ -502,6 +788,43 @@ function renderUndrawnNote() {
   el.textContent = `${n} too small to draw — ${state.undrawn
     .slice(0, 3).map((r) => r.name).join(', ')}${n > 3 ? '…' : ''}`;
   el.title = state.undrawn.map((r) => r.name).join('\n');
+}
+
+/**
+ * Solve a group header: the largest size at which the org name AND its count
+ * pill both fit one line, inside a bar that never eats more than a third of
+ * the block. Only if the name alone cannot fit at the floor does the pill go.
+ */
+function fitHeader(name, count, gw, gh) {
+  const maxH = Math.max(8, Math.round(gh * 0.34));
+  // .group-head carries letter-spacing:0.01em, and the pill has 6px side
+  // padding plus a 1px border either side. Under-count either and the name
+  // ends up in an ellipsis.
+  const track = 0.01 * name.length;
+  const nUnit = unitWidth(name, 700) + track;
+  const cUnit = unitWidth(count, 600);
+  const SLACK = 2;
+
+  for (let s = 12; s >= 4; s -= 0.25) {
+    const padPx = s < 8 ? 2 : s < 10 ? 5 : 9;
+    const gapPx = s < 8 ? 2 : 6;
+    const hh = Math.min(Math.round(s * 2), maxH);
+    if (hh < s * 1.15) continue; // no vertical room for this size
+    const pillW = cUnit * s * 0.82 + (s < 8 ? 10 : 16);
+    if (padPx * 2 + nUnit * s + gapPx + pillW + SLACK <= gw) {
+      return { size: +s.toFixed(2), headH: hh, padPx, gapPx, showCount: true };
+    }
+  }
+  // Name alone, still measured.
+  for (let s = 12; s >= 4; s -= 0.25) {
+    const padPx = s < 8 ? 2 : 5;
+    const hh = Math.min(Math.round(s * 2), maxH);
+    if (hh < s * 1.15) continue;
+    if (padPx * 2 + nUnit * s + SLACK <= gw) {
+      return { size: +s.toFixed(2), headH: hh, padPx, gapPx: 2, showCount: false };
+    }
+  }
+  return { size: 4, headH: Math.max(8, Math.min(9, maxH)), padPx: 1, gapPx: 1, showCount: false };
 }
 
 function buildTile(r, rect) {
@@ -519,30 +842,6 @@ function buildTile(r, rect) {
   if (vis !== 'visible') el.classList.add(`is-${vis}-row`);
   if (r.key === state.selectedKey) el.classList.add('is-selected');
 
-  /* Type scales with the tile rather than switching on and off. A big tile
-   * gets a readable label, not a billboard; a sliver gets 5px, which is
-   * still a legible shape and still clickable for the full metadata.
-   * Both dimensions constrain it: width against the name's own length
-   * (allowing about two wrapped lines), height against the box. */
-  const len = Math.max((r.name || '').length, 4);
-  const nameSize = Math.max(5, Math.min(13, Math.min((w * 1.9) / (0.56 * len), h * 0.40)));
-  const subSize = Math.max(4.5, nameSize * 0.8);
-  const pad = nameSize < 8 ? '1px 2px' : '3px 5px';
-  const showText = w >= 13 && h >= 8;
-  // Only promise a second line if there is room for it under the first.
-  const showSub = showText && h >= nameSize * 2.5 + subSize + 4 && w >= 34;
-  const showFlags = showText && w >= 40 && h >= 26;
-
-  el.style.cssText =
-    `left:${rect.x}px;top:${rect.y}px;width:${w}px;height:${h}px;` +
-    `padding:${pad};background:${bg};color:${ink}`;
-  el.dataset.key = r.key;
-  el.tabIndex = 0;
-  el.setAttribute('role', 'button');
-  el.setAttribute('aria-label',
-    `${r.name}, ${r.owner || 'no owner'}, ${num(r.commits)} commits, last work ${fmtAgo(r.lastActivity)}` +
-    (v.status ? `, marked ${v.status}` : '') + (vis !== 'visible' ? `, ${vis}` : ''));
-
   const flags = [
     vis !== 'visible' ? VISIBILITY.find((x) => x.id === vis).glyph : '',
     statusGlyph(r),
@@ -559,12 +858,48 @@ function buildTile(r, rect) {
   const byIssues = /issues/.test(state.filters.size) || state.filters.color === 'issues';
   const lead = byIssues
     ? `${num(r.openIssues)} iss`
-    : `${num(state.filters.size === "sqrt-effort" ? effortOf(r) : r.commits)}`;
+    : `${num(state.filters.size === 'sqrt-effort' ? effortOf(r) : r.commits)}`;
+  const subText = `${lead} · ${fmtAgo(r.lastActivity)}`;
+
+  /* Fit the real name to the real box. Padding shrinks first, because on a
+   * small tile 5px of padding is most of the tile. */
+  const padX = w < 26 ? 1 : w < 60 ? 3 : 5;
+  const padY = h < 18 ? 1 : 3;
+  const iw = w - padX * 2;
+  const ih = h - padY * 2;
+  const showText = iw >= 6 && ih >= 5;
+
+  const nameFit = showText
+    ? fitText(r.name, iw, ih, { min: 4, max: 13, weight: 600, maxLines: ih > 26 ? 3 : 2 })
+    : { size: 4, lines: 1, fits: false };
+
+  const nameH = nameFit.lines * nameFit.size * 1.15;
+  // A subtitle only earns its place if it fits under the name at a size that
+  // is still readable, and doesn't crowd the name it belongs to.
+  const subFit = showText && ih - nameH - 2 > 0
+    ? fitText(subText, iw, ih - nameH - 2,
+        { min: 5, max: Math.max(5, Math.min(10, nameFit.size * 0.85)), weight: 400, maxLines: 1 })
+    : { size: 5, fits: false };
+  const showSub = showText && nameFit.fits && subFit.fits;
+  const showFlags = showText && nameFit.fits && w >= 40 && ih - nameH >= 11;
+  // Give the name every pixel the subtitle isn't using, so a wrap that lands
+  // one line deeper than estimated still shows rather than being cut off.
+  const nameMaxH = Math.max(0, ih - (showSub ? subFit.size * 1.15 + 2 : 0));
+
+  el.style.cssText =
+    `left:${rect.x}px;top:${rect.y}px;width:${w}px;height:${h}px;` +
+    `padding:${padY}px ${padX}px;background:${bg};color:${ink}`;
+  el.dataset.key = r.key;
+  el.tabIndex = 0;
+  el.setAttribute('role', 'button');
+  el.setAttribute('aria-label',
+    `${r.name}, ${r.owner || 'no owner'}, ${num(r.commits)} commits, last work ${fmtAgo(r.lastActivity)}` +
+    (v.status ? `, marked ${v.status}` : '') + (vis !== 'visible' ? `, ${vis}` : ''));
 
   el.innerHTML = showText
-    ? `<div class="tile-name" style="font-size:${nameSize.toFixed(1)}px">${escapeHTML(r.name)}</div>` +
-      (showSub ? `<div class="tile-sub" style="font-size:${subSize.toFixed(1)}px">${lead} · ${escapeHTML(fmtAgo(r.lastActivity))}</div>` : '') +
-      (flags && showFlags ? `<div class="tile-flags" style="font-size:${Math.min(10, subSize).toFixed(1)}px">${escapeHTML(flags)}</div>` : '')
+    ? `<div class="tile-name" style="font-size:${nameFit.size}px;max-height:${nameMaxH.toFixed(1)}px">${escapeHTML(r.name)}</div>` +
+      (showSub ? `<div class="tile-sub" style="font-size:${subFit.size}px">${escapeHTML(subText)}</div>` : '') +
+      (flags && showFlags ? `<div class="tile-flags" style="font-size:${Math.min(9, subFit.size)}px">${escapeHTML(flags)}</div>` : '')
     : '';
 
   return el;
@@ -582,26 +917,35 @@ function renderLegend() {
   const parts = [];
   const mode = state.filters.color;
 
-  const hue = state.filters.hue;
-  const ramp = (steps, h = hue) =>
-    `<span class="legend-ramp">${steps
-      .map((s) => `<span class="legend-swatch" style="background:${rampSteps(h)[s]}"></span>`)
+  const ramp = (steps, h, h2) => {
+    const cols = h ? rampSteps(h, h2 || h) : activeRamp();
+    return `<span class="legend-ramp">${steps
+      .map((s) => `<span class="legend-swatch" style="background:${cols[s]}"></span>`)
       .join('')}</span>`;
+  };
   const unsorted = (label) =>
     `<span class="legend-item"><span class="legend-swatch" style="background:var(--neutral)"></span>${label}</span>`;
+
+  // With an auto scale the ends are real dates from this set, not fixed
+  // brackets — so name them, or "green" means nothing you can act on.
+  const bounds = recencyScaleLabels();
+  const recencyRange = state.filters.scale === 'auto' && bounds
+    ? `${escapeHTML(fmtAgo(bounds.oldest))} &rarr; ${escapeHTML(fmtAgo(bounds.newest))}` +
+      ` <span class="legend-note">(spread across these ${state.recencyScale.length})</span>`
+    : '2 yrs + &rarr; past week <span class="legend-note">(fixed brackets)</span>';
 
   if (mode === 'recency') {
     parts.push(
       `<span class="legend-label">Last work</span>${ramp([0, 1, 2, 3, 4, 5, 6])}` +
-      `<span class="legend-note">2 yrs + &rarr; past week</span>` + unsorted('never')
+      `<span class="legend-note">${recencyRange}</span>` + unsorted('never')
     );
   } else if (mode === 'prov-recency') {
     parts.push(
       `<span class="legend-label">Whose &times; last work</span>` +
       PROVENANCE.slice(0, 3).map((p) =>
-        `<span class="legend-item">${ramp([1, 3, 5, 6], p.hue)}${p.glyph} ${p.label}</span>`
+        `<span class="legend-item">${ramp([0, 2, 4, 6], p.hue, p.hueTo)}${p.glyph} ${p.label}</span>`
       ).join('') +
-      `<span class="legend-note">hue = whose it is, darker = touched more recently</span>`
+      `<span class="legend-note">${recencyRange}</span>`
     );
   } else if (mode === 'issues') {
     parts.push(
@@ -610,7 +954,7 @@ function renderLegend() {
     );
   } else if (mode === 'status') {
     parts.push('<span class="legend-label">Status</span>' + STATUSES.map((s) =>
-      `<span class="legend-item"><span class="legend-swatch" style="background:${rampSteps(hue)[s.step]}"></span>${s.glyph} ${s.label}</span>`
+      `<span class="legend-item"><span class="legend-swatch" style="background:${activeRamp()[s.step]}"></span>${s.glyph} ${s.label}</span>`
     ).join('') + unsorted('Unsorted'));
   } else if (mode === 'provenance') {
     parts.push('<span class="legend-label">Provenance</span>' + PROVENANCE.map((p) =>
@@ -619,7 +963,7 @@ function renderLegend() {
   } else if (mode === 'priority') {
     parts.push('<span class="legend-label">Priority</span>' +
       [[6, 'High'], [4, 'Medium'], [2, 'Low']].map(([step, label]) =>
-        `<span class="legend-item"><span class="legend-swatch" style="background:${rampSteps(hue)[step]}"></span>${label}</span>`
+        `<span class="legend-item"><span class="legend-swatch" style="background:${activeRamp()[step]}"></span>${label}</span>`
       ).join('') + unsorted('Unset'));
   }
 
@@ -754,7 +1098,7 @@ function openPanel(key) {
       <h3>Status</h3>
       <div class="seg" id="seg-status">
         ${STATUSES.map((s) => `<button type="button" data-status="${s.id}" aria-pressed="${v.status === s.id}">
-          <span class="dot" style="background:${rampSteps(state.filters.hue)[s.step]}"></span>${s.glyph} ${s.label}</button>`).join('')}
+          <span class="dot" style="background:${activeRamp()[s.step]}"></span>${s.glyph} ${s.label}</button>`).join('')}
         <button type="button" data-status="" aria-pressed="${!v.status}">Unsorted</button>
       </div>
     </div>
@@ -1053,9 +1397,37 @@ function wireGlobal() {
     if (!e.relatedTarget || !repoAt(e.relatedTarget)) tip().hidden = true;
   });
   stage.addEventListener('click', (e) => {
+    // Bring a minimized group back.
+    const chip = e.target.closest('.dock-chip');
+    if (chip) { toggleFocus(chip.dataset.group); return; }
+
+    const head = e.target.closest('.group-head');
+    if (head) {
+      const name = head.dataset.group;
+      const s = focusSet();
+      if (!s.size) {
+        // Nothing focused yet: this one takes the map, the rest go to the dock.
+        s.add(name);
+        persistFocus();
+        closePanel();
+        render();
+      } else {
+        // Already focusing: clicking a focused header minimizes it again.
+        toggleFocus(name);
+      }
+      return;
+    }
     const r = repoAt(e.target);
     if (r) openPanel(r.key);
     else closePanel(); // clicking bare map closes an unpinned panel
+  });
+
+  stage.addEventListener('keydown', (e) => {
+    const head = e.target.closest && e.target.closest('.group-head');
+    if (head && (e.key === 'Enter' || e.key === ' ')) {
+      e.preventDefault();
+      toggleFocus(head.dataset.group);
+    }
   });
 
   $('#table-body').addEventListener('click', (e) => {
@@ -1092,9 +1464,17 @@ function wireGlobal() {
     syncHueControl();
     render();
   });
-  $('#f-hue').addEventListener('input', (e) => {
-    state.filters.hue = e.target.value;
-    localStorage.setItem('atlas-hue', e.target.value);
+  $('#f-hue').addEventListener('input', (e) => setPalette(e.target.value, state.filters.hueTo));
+  $('#f-hue-to').addEventListener('input', (e) => setPalette(state.filters.hue, e.target.value));
+  $('#f-preset').addEventListener('input', (e) => {
+    if (!e.target.value) return;
+    const [from, to] = e.target.value.split(':');
+    setPalette(from, to);
+    e.target.value = '';
+  });
+  $('#f-scale').addEventListener('input', (e) => {
+    state.filters.scale = e.target.value;
+    localStorage.setItem('atlas-scale', e.target.value);
     render();
   });
 
@@ -1119,6 +1499,8 @@ function wireGlobal() {
     const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
     document.documentElement.dataset.theme = next;
     localStorage.setItem('atlas-theme', next);
+    _rampCache.clear(); // ramps are stepped per mode, not inverted
+    renderPaletteBadge();
     render();
   });
 
@@ -1163,10 +1545,57 @@ function wireGlobal() {
 
 /* --------------------------------------------------------------- boot */
 
-/** The palette picker only means anything for single-hue encodings. */
+/** The palette picker only drives the single-variable encodings. */
 function syncHueControl() {
   const usesRamp = ['recency', 'issues', 'status', 'priority'].includes(state.filters.color);
   $('#ctl-hue').style.display = usesRamp ? '' : 'none';
+  $('#ctl-scale').style.display =
+    ['recency', 'prov-recency'].includes(state.filters.color) ? '' : 'none';
+  renderPaletteBadge(); // cheap, and the badge must never be blank
+}
+
+/**
+ * Run the real checks on whatever ramp is selected and say so. Red→green is
+ * the classic colour-vision failure; it is offered because it is the clearest
+ * scale for most people, but it should never ship silently.
+ */
+function renderPaletteBadge() {
+  const badge = $('#palette-badge');
+  const ramp = activeRamp();
+  const { ok, checks, endsCVD, endsKind } = window.ATLAS_PALETTE.validateRamp(ramp, themeName());
+  const failed = checks.filter((c) => !c.pass);
+  const endsFail = failed.some((c) => c.name === 'Ends distinguishable');
+
+  badge.className = 'palette-badge ' + (ok ? 'ok' : endsFail ? 'bad' : 'warn');
+  badge.textContent = ok
+    ? '✓ colour-vision safe'
+    : endsFail
+      ? `✕ ends merge for ${endsKind}`
+      : `⚠ ${failed[0].name.toLowerCase()}`;
+  badge.title = ok
+    ? `All checks pass in ${themeName()} mode.\n` + checks.map((c) => `✓ ${c.name}: ${c.detail}`).join('\n')
+    : `Problems in ${themeName()} mode:\n` +
+      failed.map((c) => `✕ ${c.name}: ${c.detail}`).join('\n') +
+      (endsFail ? `\n\nThe two ends read as ΔE ${endsCVD.toFixed(1)} apart under ${endsKind} — ` +
+        'roughly one colour. Red→Blue reads the same way to everyone.' : '');
+}
+
+function setPalette(from, to) {
+  state.filters.hue = from;
+  state.filters.hueTo = to;
+  $('#f-hue').value = from;
+  $('#f-hue-to').value = to;
+  localStorage.setItem('atlas-hue', from);
+  localStorage.setItem('atlas-hue-to', to);
+  renderPaletteBadge();
+  render();
+}
+
+function populateHueSelects() {
+  const opts = Object.entries(window.ATLAS_PALETTE.ANCHORS)
+    .map(([k, a]) => `<option value="${k}">${a.label}</option>`).join('');
+  $('#f-hue').innerHTML = opts;
+  $('#f-hue-to').innerHTML = opts;
 }
 
 /**
@@ -1230,10 +1659,16 @@ async function boot() {
   state.verdicts = migrateVerdicts(payload.verdicts || {}, state.repos);
 
   // Restore what you last chose to look at.
+  populateHueSelects();
+  restoreFocus();
   state.filters.color = localStorage.getItem('atlas-color') || state.filters.color;
   state.filters.hue = localStorage.getItem('atlas-hue') || state.filters.hue;
+  state.filters.hueTo = localStorage.getItem('atlas-hue-to') || state.filters.hueTo;
+  state.filters.scale = localStorage.getItem('atlas-scale') || state.filters.scale;
   $('#f-color').value = state.filters.color;
   $('#f-hue').value = state.filters.hue;
+  $('#f-hue-to').value = state.filters.hueTo;
+  $('#f-scale').value = state.filters.scale;
   setPinned(localStorage.getItem('atlas-pin') === '1');
   syncHueControl();
 
