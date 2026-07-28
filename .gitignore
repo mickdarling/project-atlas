@@ -1,0 +1,9 @@
+# Harvested facts — regenerate any time with `npm run scan`.
+data/inventory.json
+data/*.tmp
+
+# data/verdicts.json is deliberately NOT ignored.
+# It holds your judgments and is the one file here that cannot be regenerated.
+
+.DS_Store
+node_modules/

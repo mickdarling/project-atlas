@@ -1,0 +1,15 @@
+{
+  "name": "project-atlas",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A treemap of every project you have, sized by investment and colored by recency, with your own triage layer on top.",
+  "scripts": {
+    "scan": "node scan.js",
+    "scan:local": "node scan.js --no-github",
+    "serve": "node server.js",
+    "start": "node scan.js && node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

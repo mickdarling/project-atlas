@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Project Atlas</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<header class="bar">
+  <div class="bar-title">
+    <strong>Project Atlas</strong>
+    <span class="muted" id="scan-stamp">loading…</span>
+  </div>
+
+  <div class="controls" role="group" aria-label="Filters and encoding">
+    <label class="ctl">
+      <span>Search</span>
+      <input type="search" id="f-search" placeholder="name, org, language…" autocomplete="off">
+    </label>
+
+    <label class="ctl">
+      <span>Group by</span>
+      <select id="f-group">
+        <option value="owner">Organization</option>
+        <option value="provenance">Provenance</option>
+        <option value="status">Status</option>
+        <option value="presence">Local vs remote</option>
+        <option value="language">Language</option>
+      </select>
+    </label>
+
+    <label class="ctl">
+      <span>Color by</span>
+      <select id="f-color">
+        <option value="recency">Recency of work</option>
+        <option value="status">Status (your call)</option>
+        <option value="provenance">Provenance</option>
+        <option value="priority">Priority</option>
+      </select>
+    </label>
+
+    <label class="ctl">
+      <span>Area</span>
+      <select id="f-size">
+        <option value="sqrt-effort">&#8730; commits by you</option>
+        <option value="sqrt-commits">&#8730; all commits</option>
+        <option value="commits">all commits (linear)</option>
+        <option value="sqrt-files">&#8730; tracked files</option>
+        <option value="equal">equal</option>
+      </select>
+    </label>
+
+    <label class="ctl ctl-check">
+      <input type="checkbox" id="f-hidden">
+      <span>Show hidden</span>
+    </label>
+
+    <div class="ctl-buttons">
+      <button type="button" id="btn-table" aria-pressed="false">Table</button>
+      <button type="button" id="btn-theme" title="Toggle light / dark">◑</button>
+      <button type="button" id="btn-export" title="Download verdicts.json">Export</button>
+    </div>
+  </div>
+</header>
+
+<div class="legend" id="legend" aria-live="polite"></div>
+
+<main id="stage" tabindex="0" aria-label="Project treemap">
+  <div id="treemap"></div>
+</main>
+
+<section id="table-view" hidden aria-label="Project table">
+  <table>
+    <thead>
+      <tr>
+        <th scope="col">Project</th><th scope="col">Org</th><th scope="col">Provenance</th>
+        <th scope="col">Where</th><th scope="col" class="num">Commits</th>
+        <th scope="col">Last work</th><th scope="col" class="num">Issues</th>
+        <th scope="col" class="num">PRs</th><th scope="col">Status</th>
+        <th scope="col">Priority</th><th scope="col">Tags</th>
+      </tr>
+    </thead>
+    <tbody id="table-body"></tbody>
+  </table>
+</section>
+
+<div id="tooltip" role="tooltip" hidden></div>
+
+<aside id="panel" hidden aria-label="Project detail">
+  <button type="button" class="panel-close" id="panel-close" aria-label="Close">×</button>
+  <div id="panel-body"></div>
+</aside>
+
+<footer class="hint">
+  <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> priority · <kbd>0</kbd> none ·
+  <kbd>d</kbd> done · <kbd>a</kbd> active · <kbd>s</kbd> someday · <kbd>x</kbd> dead ·
+  <kbd>h</kbd> hide · <kbd>esc</kbd> close
+  <span class="save-state" id="save-state"></span>
+</footer>
+
+<script src="/app.js"></script>
+</body>
+</html>
