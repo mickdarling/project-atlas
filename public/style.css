@@ -255,6 +255,9 @@ main#stage {
 main#stage:focus-visible { box-shadow: inset 0 0 0 2px var(--series-1); }
 
 main#stage { display: flex; flex-direction: column; }
+/* An author display rule beats the UA [hidden]{display:none}, so the hidden
+   attribute alone stops working the moment display:flex is set. Restore it. */
+main#stage[hidden] { display: none; }
 #treemap { position: relative; flex: 1 1 auto; min-height: 0; width: 100%; }
 
 /* Minimized groups. Focus hides nothing — it parks the rest here, still

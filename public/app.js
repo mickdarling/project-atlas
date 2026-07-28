@@ -599,16 +599,20 @@ function renderTreemap() {
   const focus = focusSet();
   const totalGroups = groups.length;
   let parked = [];
+  let focusApplied = false;
   if (focus.size) {
     const kept = groups.filter((g) => focus.has(g.name));
     if (kept.length) {
       parked = groups.filter((g) => !focus.has(g.name));
       groups = kept;
+      focusApplied = true;
     }
   }
   // Populate the dock BEFORE measuring, since it takes height from the map.
   renderDock(parked);
-  renderFocusChip(groups.length, totalGroups);
+  // Only claim focus when it actually filtered something — a search that
+  // excludes the focused org would otherwise show "Focused on 16 of 16".
+  renderFocusChip(focusApplied ? groups.length : 0, totalGroups, focusApplied);
 
   // Normalise the recency ramp over exactly the projects being drawn: focus on
   // one org and the colours re-spread across that org's own history.
@@ -762,11 +766,11 @@ function renderDock(parked) {
       .join('');
 }
 
-function renderFocusChip(shown, total) {
+function renderFocusChip(shown, total, applied = true) {
   const el = $('#focus-chip');
   if (!el) return;
   const s = focusSet();
-  if (!s.size) { el.hidden = true; return; }
+  if (!s.size || !applied) { el.hidden = true; return; }
   el.hidden = false;
   el.innerHTML =
     `<span>Focused on ${shown} of ${total}: ${escapeHTML([...s].join(', '))}</span>` +
@@ -1491,7 +1495,11 @@ function wireGlobal() {
   // Only the panel itself is exempt, so you can actually use its controls.
   document.addEventListener('mousedown', (e) => {
     if (state.panelPinned || $('#panel').hidden) return;
-    if (e.target.closest('#panel, .tile')) return;
+    // Group headers and dock chips are click targets too. Closing on THEIR
+    // mousedown re-renders the treemap, which destroys the element under the
+    // cursor before its click event can fire — the focus click silently
+    // vanishes. Let their own click handlers close the panel instead.
+    if (e.target.closest('#panel, .tile, .group-head, .dock-chip')) return;
     closePanel();
   });
 
