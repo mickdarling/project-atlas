@@ -57,9 +57,39 @@ if it's a fork. The square root keeps small projects visible; the legend always
 states which scale is active. Switch to `√ all commits` or linear `all commits` when
 you want the unflattering truth.
 
-**Color** defaults to recency — a single-hue sequential ramp, light for "two years
-ago" through dark for "this week". You can also color by your status, provenance, or
-priority.
+**Color** has six modes. Recency is the default — a single-hue ramp, pale for "two
+years ago" through dark for "this week".
+
+`Mine vs outside × recency` is the bivariate one: **hue** says whose the project is
+(blue yours, orange a fork, green someone else's clone) and **lightness** says how
+recently you touched it. Three hues, which is exactly the all-pairs colour-vision
+ceiling — a fourth could not be told apart reliably, so there isn't one.
+
+`Open issues` matters here more than it looks: 2,806 of them across the portfolio,
+860 on `mcp-server` alone. If issues are where ideas land, this is the idea map.
+Size by issues too and the map reorganizes around thinking rather than typing.
+
+The **Palette** picker swaps the ramp hue across all single-hue modes — eight
+choices, and it hides itself for the modes where hue carries meaning.
+
+### Counting commits honestly
+
+`commits` is `git rev-list --count --all` — every ref the clone knows about. Counting
+`HEAD` instead reports whatever branch happened to be checked out, which is a fact
+about your last `git switch`, not about the project. The gap is not small:
+`mcp-server` is 2,933 on its current branch and **4,090** across all refs. The panel
+shows all three numbers (all refs, this branch, GitHub's default branch) so a
+surprising figure can be traced.
+
+### Duplicate working copies
+
+Several folders can hold clones of one GitHub repo — backups, review checkouts,
+archived snapshots. Nine slugs here do; `DollhouseMCP/mcp-server` has four.
+
+Each gets its own tile, keyed by **path**, because a slug is not unique. The clone
+with the most history is primary and carries the GitHub metadata; the rest are
+marked `⧉` and report no issue count, so four copies of one repo can't report its
+860 issues four times. They're prime candidates for hiding.
 
 **Borders carry provenance and location** so the color channel stays free:
 dashed = local only, dotted = not cloned. Corner glyphs: `✱` uncommitted changes,
@@ -76,9 +106,23 @@ Click any tile. Or select one and use the keyboard:
 |---|---|
 | `1` `2` `3` | priority low / medium / high |
 | `0` | clear priority |
-| `d` `a` `s` `x` | done / active / someday / dead |
+| `a` | active |
+| `u` | **in use, not developed** — you run it, you don't work on it |
+| `s` | someday |
+| `d` | done |
+| `x` | dead |
 | `h` | hide (with an optional reason) |
+| `p` | pin the panel |
 | `esc` | close the panel |
+
+Status is ordinal — "how alive is this" — so it's one hue stepped by liveness rather
+than five competing hues, with the glyph carrying exact identity. Five adjacent
+categorical hues cannot clear the colour-vision gates on a treemap where every tile
+touches every other; a validated ordinal ramp can.
+
+The panel **pushes the map aside instead of covering it**, so you can still see what
+you're comparing against. Unpinned it closes when you click away; pinned it stays
+and swaps content as you select tiles. `esc` closes it either way.
 
 Saves are debounced and land in `data/verdicts.json` within half a second.
 
@@ -105,8 +149,15 @@ re-run the scan.
 
 ## Accessibility
 
-Categorical palettes are validated for color-vision deficiency, not eyeballed — three
-slots, all-pairs, both modes. Identity never rests on color alone: every tile carries
+Every palette here was validated by script, not eyeballed. The eight ramps in
+`public/ramps.js` are generated: each hue's chroma is walked down until the ramp
+passes the ordinal checks (lightness monotone, adjacent ΔL ≥ 0.06, pale end clears
+2:1 against the surface, single hue) in **both** light and dark. Regenerate them
+rather than hand-editing. Categorical use is capped at three slots, all-pairs,
+both modes — the documented ceiling, and the reason status is ordinal rather than
+five hues.
+
+Identity never rests on color alone: every tile carries
 its name, a glyph, and a tooltip, and a full table view (`Table` button, sortable)
 mirrors the map. Light and dark are separately stepped ramps, not an inverted filter.
 
@@ -118,6 +169,7 @@ server.js          127.0.0.1 static server + verdicts read/write + reveal-in-Fin
 public/index.html  structure
 public/style.css   palette roles, both themes
 public/app.js      squarified treemap, encodings, triage panel, table view
+public/ramps.js    GENERATED — 8 validated sequential ramps, light and dark
 data/identity.json which commits count as yours (yours to edit)
 data/verdicts.json your judgments (committed)
 data/inventory.json harvested facts (gitignored, regenerate any time)

@@ -23,26 +23,47 @@ const state = {
     search: '',
     group: 'owner',
     color: 'recency',
+    hue: 'blue',
     size: 'sqrt-effort',
     showHidden: false,
   },
+  panelPinned: false,
 };
 
 /* -------------------------------------------------------- vocabulary */
 
+/* Status is ORDINAL — "how alive is this" — so it gets one hue stepped by
+ * liveness, not five competing hues. Five adjacent categorical hues cannot
+ * clear the colour-vision gates on a treemap (every tile touches every other),
+ * but a validated ordinal ramp can, and the glyph carries exact identity. */
 const STATUSES = [
-  { id: 'active', label: 'Active', glyph: '●', varName: '--series-1', ink: '--series-1-ink' },
-  { id: 'done', label: 'Done', glyph: '✓', varName: '--series-3', ink: '--series-3-ink' },
-  { id: 'someday', label: 'Someday', glyph: '◔', varName: '--series-2', ink: '--series-2-ink' },
-  { id: 'dead', label: 'Dead', glyph: '✕', varName: '--neutral', ink: '--neutral-ink' },
+  { id: 'active', label: 'Active', glyph: '●', step: 6, key: 'a' },
+  { id: 'in-use', label: 'In use, not developed', glyph: '▣', step: 5, key: 'u' },
+  { id: 'someday', label: 'Someday', glyph: '◔', step: 4, key: 's' },
+  { id: 'done', label: 'Done', glyph: '✓', step: 3, key: 'd' },
+  { id: 'dead', label: 'Dead', glyph: '✕', step: 2, key: 'x' },
 ];
 
+/* Provenance IS categorical, and three is the documented ceiling for
+ * all-pairs adjacency — which is exactly how many real values there are. */
 const PROVENANCE = [
-  { id: 'mine', label: 'Mine', glyph: '◆', varName: '--series-1', ink: '--series-1-ink' },
-  { id: 'fork', label: 'Fork of someone else', glyph: '⑂', varName: '--series-2', ink: '--series-2-ink' },
-  { id: 'external', label: "Clone of someone else's", glyph: '↓', varName: '--series-3', ink: '--series-3-ink' },
-  { id: 'unknown', label: 'Unknown', glyph: '?', varName: '--neutral', ink: '--neutral-ink' },
+  { id: 'mine', label: 'Mine', glyph: '◆', hue: 'blue', varName: '--series-1', ink: '--series-1-ink' },
+  { id: 'fork', label: 'Fork of someone else', glyph: '⑂', hue: 'orange', varName: '--series-2', ink: '--series-2-ink' },
+  { id: 'external', label: "Clone of someone else's", glyph: '↓', hue: 'aqua', varName: '--series-3', ink: '--series-3-ink' },
+  { id: 'unknown', label: 'Unknown', glyph: '?', hue: 'blue', varName: '--neutral', ink: '--neutral-ink' },
 ];
+
+const ISSUE_BINS = [
+  { max: 1, label: 'none' },
+  { max: 3, label: '1–2' },
+  { max: 6, label: '3–5' },
+  { max: 16, label: '6–15' },
+  { max: 41, label: '16–40' },
+  { max: 101, label: '41–100' },
+  { max: Infinity, label: '100 +' },
+];
+
+const PRIORITY_LABEL = { 3: 'High', 2: 'Medium', 1: 'Low', 0: 'None' };
 
 const RECENCY_BINS = [
   { max: 7, label: 'past week' },
@@ -70,6 +91,39 @@ const COMMON_TAGS = [
 function cssVar(name) {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 }
+
+function themeName() {
+  return document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light';
+}
+
+/** Steps of a validated single-hue ramp, index 0 = least, 6 = most. */
+function rampSteps(hue) {
+  const r = (window.ATLAS_RAMPS || {})[hue] || (window.ATLAS_RAMPS || {}).blue;
+  return r ? r[themeName()] : ['#888', '#888', '#888', '#888', '#888', '#888', '#888'];
+}
+
+const _inkCache = new Map();
+/** Pick black or white ink by whichever has more contrast on this fill. */
+function inkOn(hex) {
+  if (_inkCache.has(hex)) return _inkCache.get(hex);
+  const c = hex.replace('#', '');
+  const lum = [0, 2, 4]
+    .map((i) => parseInt(c.slice(i, i + 2), 16) / 255)
+    .map((v) => (v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4))
+    .reduce((s, v, i) => s + v * [0.2126, 0.7152, 0.0722][i], 0);
+  const onWhite = 1.05 / (lum + 0.05);
+  const onBlack = (lum + 0.05) / 0.05;
+  const ink = onBlack >= onWhite ? '#0b0b0b' : '#ffffff';
+  _inkCache.set(hex, ink);
+  return ink;
+}
+
+function fromRamp(hue, step) {
+  const bg = rampSteps(hue)[Math.max(0, Math.min(6, step))];
+  return { bg, ink: inkOn(bg) };
+}
+
+const NEUTRAL = () => ({ bg: cssVar('--neutral'), ink: cssVar('--neutral-ink') });
 
 function daysSince(iso) {
   if (!iso) return null;
@@ -115,6 +169,8 @@ function sizeValue(r) {
   switch (state.filters.size) {
     case 'commits': return Math.max(r.commits || 0, 1);
     case 'sqrt-commits': return Math.sqrt(Math.max(r.commits || 0, 1));
+    case 'issues': return Math.max(r.openIssues || 0, 1);
+    case 'sqrt-issues': return Math.sqrt(Math.max(r.openIssues || 0, 1));
     case 'sqrt-files': return Math.sqrt(Math.max(r.trackedFiles || 0, 1));
     case 'equal': return 1;
     case 'sqrt-effort':
@@ -122,31 +178,49 @@ function sizeValue(r) {
   }
 }
 
+function issueBin(n) {
+  if (n === null || n === undefined) return null;
+  for (let i = 0; i < ISSUE_BINS.length; i++) if (n < ISSUE_BINS[i].max) return i;
+  return ISSUE_BINS.length - 1;
+}
+
+/** Recency as a ramp step: 6 = touched this week, 0 = two years cold. */
+function recencyStep(r) {
+  const bin = recencyBin(r.lastActivity);
+  return bin === null ? null : RECENCY_BINS.length - 1 - bin;
+}
+
 function colorFor(r) {
   const v = verdict(r.key);
+  const hue = state.filters.hue;
   switch (state.filters.color) {
     case 'status': {
       const s = STATUSES.find((x) => x.id === v.status);
-      return s
-        ? { bg: cssVar(s.varName), ink: cssVar(s.ink) }
-        : { bg: cssVar('--neutral'), ink: cssVar('--neutral-ink') };
+      return s ? fromRamp(hue, s.step) : NEUTRAL();
     }
     case 'provenance': {
       const p = PROVENANCE.find((x) => x.id === r.provenance) || PROVENANCE[3];
       return { bg: cssVar(p.varName), ink: cssVar(p.ink) };
     }
+    // Bivariate: hue says whose it is, lightness says how recently you touched
+    // it. Only three hues, which is exactly the all-pairs ceiling.
+    case 'prov-recency': {
+      const p = PROVENANCE.find((x) => x.id === r.provenance) || PROVENANCE[3];
+      const step = recencyStep(r);
+      return step === null ? NEUTRAL() : fromRamp(p.hue, step);
+    }
+    case 'issues': {
+      const bin = issueBin(r.openIssues);
+      return bin === null ? NEUTRAL() : fromRamp(hue, bin);
+    }
     case 'priority': {
-      const map = { 3: 6, 2: 4, 1: 2 };
-      const step = map[v.priority];
-      if (step === undefined) return { bg: cssVar('--neutral'), ink: cssVar('--neutral-ink') };
-      return { bg: cssVar(`--r${step}`), ink: cssVar(`--r${step}-ink`) };
+      const step = { 3: 6, 2: 4, 1: 2 }[v.priority];
+      return step === undefined ? NEUTRAL() : fromRamp(hue, step);
     }
     case 'recency':
     default: {
-      const bin = recencyBin(r.lastActivity);
-      if (bin === null) return { bg: cssVar('--neutral'), ink: cssVar('--neutral-ink') };
-      const step = RECENCY_BINS.length - 1 - bin; // newest -> highest step
-      return { bg: cssVar(`--r${step}`), ink: cssVar(`--r${step}-ink`) };
+      const step = recencyStep(r);
+      return step === null ? NEUTRAL() : fromRamp(hue, step);
     }
   }
 }
@@ -163,6 +237,7 @@ function groupOf(r) {
     }
     case 'presence': return PRESENCE_LABEL[r.presence] || r.presence;
     case 'language': return r.language || 'No language detected';
+    case 'none': return `All ${state.repos.length} projects`;
     case 'owner':
     default: return r.group || 'Unaffiliated';
   }
@@ -371,15 +446,23 @@ function buildTile(r, rect) {
 
   const flags = [
     statusGlyph(r),
-    v.priority ? '!'.repeat(v.priority) : '',
+    v.priority ? ['', '▁', '▄', '█'][v.priority] : '',
+    r.duplicateOf ? '⧉' : '',
     r.dirtyFiles ? '✱' : '',
     r.unpushedCommits ? '↑' : '',
     r.isArchived ? '▤' : '',
   ].filter(Boolean).join(' ');
 
+  // The subtitle tracks whatever the map is currently sized or coloured by,
+  // so the number on the tile is the number you are looking at.
+  const byIssues = /issues/.test(state.filters.size) || state.filters.color === 'issues';
+  const lead = byIssues
+    ? `${num(r.openIssues)} iss`
+    : `${num(state.filters.size === 'sqrt-effort' ? r.effort : r.commits)}`;
+
   el.innerHTML =
     `<div class="tile-name">${escapeHTML(r.name)}</div>` +
-    `<div class="tile-sub">${num(r.commits)} · ${escapeHTML(fmtAgo(r.lastActivity))}</div>` +
+    `<div class="tile-sub">${lead} · ${escapeHTML(fmtAgo(r.lastActivity))}</div>` +
     (flags ? `<div class="tile-flags">${escapeHTML(flags)}</div>` : '');
 
   return el;
@@ -397,37 +480,53 @@ function renderLegend() {
   const parts = [];
   const mode = state.filters.color;
 
+  const hue = state.filters.hue;
+  const ramp = (steps, h = hue) =>
+    `<span class="legend-ramp">${steps
+      .map((s) => `<span class="legend-swatch" style="background:${rampSteps(h)[s]}"></span>`)
+      .join('')}</span>`;
+  const unsorted = (label) =>
+    `<span class="legend-item"><span class="legend-swatch" style="background:var(--neutral)"></span>${label}</span>`;
+
   if (mode === 'recency') {
-    const swatches = RECENCY_BINS.map((_, i) => {
-      const step = RECENCY_BINS.length - 1 - i;
-      return `<span class="legend-swatch" style="background:var(--r${step})"></span>`;
-    }).reverse().join('');
     parts.push(
-      `<span class="legend-label">Last work</span>` +
-      `<span class="legend-ramp">${swatches}</span>` +
-      `<span class="legend-note">2 yrs + &rarr; past week</span>`
+      `<span class="legend-label">Last work</span>${ramp([0, 1, 2, 3, 4, 5, 6])}` +
+      `<span class="legend-note">2 yrs + &rarr; past week</span>` + unsorted('never')
+    );
+  } else if (mode === 'prov-recency') {
+    parts.push(
+      `<span class="legend-label">Whose &times; last work</span>` +
+      PROVENANCE.slice(0, 3).map((p) =>
+        `<span class="legend-item">${ramp([1, 3, 5, 6], p.hue)}${p.glyph} ${p.label}</span>`
+      ).join('') +
+      `<span class="legend-note">hue = whose it is, darker = touched more recently</span>`
+    );
+  } else if (mode === 'issues') {
+    parts.push(
+      `<span class="legend-label">Open issues</span>${ramp([0, 1, 2, 3, 4, 5, 6])}` +
+      `<span class="legend-note">none &rarr; 100 +</span>` + unsorted('not on GitHub')
     );
   } else if (mode === 'status') {
     parts.push('<span class="legend-label">Status</span>' + STATUSES.map((s) =>
-      `<span class="legend-item"><span class="legend-swatch" style="background:var(${s.varName})"></span>${s.glyph} ${s.label}</span>`
-    ).join('') +
-      `<span class="legend-item"><span class="legend-swatch" style="background:var(--neutral)"></span>Unsorted</span>`);
+      `<span class="legend-item"><span class="legend-swatch" style="background:${rampSteps(hue)[s.step]}"></span>${s.glyph} ${s.label}</span>`
+    ).join('') + unsorted('Unsorted'));
   } else if (mode === 'provenance') {
     parts.push('<span class="legend-label">Provenance</span>' + PROVENANCE.map((p) =>
       `<span class="legend-item"><span class="legend-swatch" style="background:var(${p.varName})"></span>${p.glyph} ${p.label}</span>`
     ).join(''));
   } else if (mode === 'priority') {
     parts.push('<span class="legend-label">Priority</span>' +
-      [[3, 6, 'High'], [2, 4, 'Medium'], [1, 2, 'Low']].map(([, step, label]) =>
-        `<span class="legend-item"><span class="legend-swatch" style="background:var(--r${step})"></span>${label}</span>`
-      ).join('') +
-      `<span class="legend-item"><span class="legend-swatch" style="background:var(--neutral)"></span>Unset</span>`);
+      [[6, 'High'], [4, 'Medium'], [2, 'Low']].map(([step, label]) =>
+        `<span class="legend-item"><span class="legend-swatch" style="background:${rampSteps(hue)[step]}"></span>${label}</span>`
+      ).join('') + unsorted('Unset'));
   }
 
   const sizeLabel = {
     'sqrt-effort': 'Area = √ commits by you (compressed; forks and clones shrink away)',
-    'sqrt-commits': 'Area = √ all commits, including other people’s',
+    'sqrt-commits': 'Area = √ all commits across every branch, including other people’s',
     commits: 'Area = all commits, linear (true proportion)',
+    'sqrt-issues': 'Area = √ open issues',
+    issues: 'Area = open issues, linear',
     'sqrt-files': 'Area = √ tracked files',
     equal: 'Area = equal (all tiles same size)',
   }[state.filters.size];
@@ -487,7 +586,7 @@ function renderTable() {
       <td class="num">${num(r.openIssues)}</td>
       <td class="num">${num(r.openPRs)}</td>
       <td>${s ? `${s.glyph} ${escapeHTML(s.label)}` : '—'}</td>
-      <td>${v.priority ? '!'.repeat(v.priority) : '—'}</td>
+      <td>${escapeHTML(PRIORITY_LABEL[v.priority || 0])}</td>
       <td>${escapeHTML((v.tags || []).join(', ') || '—')}</td>
     </tr>`;
   }).join('');
@@ -519,24 +618,31 @@ function openPanel(key) {
     ${r.description ? `<p class="panel-desc">${escapeHTML(r.description)}</p>` : ''}
 
     <div class="stat-row">
-      <div class="stat"><div class="stat-label">Commits</div>
+      <div class="stat"><div class="stat-label">Commits (all refs)</div>
         <div class="stat-value">${num(r.commits)}
           ${r.myCommits && r.commits ? `<small>${Math.round(r.myCommitShare * 100)}% yours</small>` : ''}</div></div>
       <div class="stat"><div class="stat-label">Last work</div>
         <div class="stat-value" style="font-size:14px">${escapeHTML(fmtAgo(r.lastActivity))}</div></div>
-      <div class="stat"><div class="stat-label">Open</div>
-        <div class="stat-value">${num(r.openIssues)}<small> iss</small> ${num(r.openPRs)}<small> pr</small></div></div>
+      <div class="stat"><div class="stat-label">Open issues</div>
+        <div class="stat-value">${num(r.openIssues)}<small> · ${num(r.openPRs)} pr</small></div></div>
     </div>
 
-    ${stale ? `<div class="stale">You last judged this <strong>${escapeHTML(fmtDate(v.markedAt))}</strong>,
-      when the newest commit was ${escapeHTML(fmtDate(v.seenLastCommit))}.
-      It has moved since — newest commit is now <strong>${escapeHTML(fmtDate(r.lastActivity))}</strong>.</div>` : ''}
+    ${stale ? `<div class="stale">⚠ <strong>Your call here may be out of date.</strong>
+      You marked this ${escapeHTML(fmtDate(v.markedAt))}. There has been new work since —
+      the newest commit is now ${escapeHTML(fmtDate(r.lastActivity))}
+      (${escapeHTML(fmtAgo(r.lastActivity))}), where it was
+      ${escapeHTML(fmtDate(v.seenLastCommit))} when you judged it.</div>` : ''}
+
+    ${r.duplicateOf ? `<div class="dup-note">⧉ <strong>This is a second working copy.</strong>
+      ${r.clonesOfSlug} folders on this machine point at <code>${escapeHTML(r.slug)}</code>.
+      Issue and PR counts are attributed to the copy with the most history, so they
+      show as — here. A good candidate to hide.</div>` : ''}
 
     <div class="panel-section">
       <h3>Status</h3>
       <div class="seg" id="seg-status">
         ${STATUSES.map((s) => `<button type="button" data-status="${s.id}" aria-pressed="${v.status === s.id}">
-          <span class="dot" style="background:var(${s.varName})"></span>${s.glyph} ${s.label}</button>`).join('')}
+          <span class="dot" style="background:${rampSteps(state.filters.hue)[s.step]}"></span>${s.glyph} ${s.label}</button>`).join('')}
         <button type="button" data-status="" aria-pressed="${!v.status}">Unsorted</button>
       </div>
     </div>
@@ -544,8 +650,8 @@ function openPanel(key) {
     <div class="panel-section">
       <h3>Priority</h3>
       <div class="seg" id="seg-priority">
-        ${[[3, 'High'], [2, 'Medium'], [1, 'Low'], [0, 'None']].map(([n, label]) =>
-          `<button type="button" data-priority="${n}" aria-pressed="${(v.priority || 0) === n}">${label}</button>`).join('')}
+        ${[3, 2, 1, 0].map((n) =>
+          `<button type="button" data-priority="${n}" aria-pressed="${(v.priority || 0) === n}">${PRIORITY_LABEL[n]}</button>`).join('')}
       </div>
     </div>
 
@@ -587,6 +693,9 @@ function openPanel(key) {
       <dl class="kv">
         <dt>Path</dt><dd>${escapeHTML(r.path || '— not cloned —')}</dd>
         <dt>Branch</dt><dd>${escapeHTML(r.branch || '—')}</dd>
+        <dt>On this branch</dt><dd>${num(r.commitsHead)}</dd>
+        <dt>Local branches</dt><dd>${num(r.localBranches)}</dd>
+        <dt>On GitHub default</dt><dd>${num(r.remoteCommits)}</dd>
         <dt>First commit</dt><dd>${escapeHTML(fmtDate(r.firstCommitDate))}</dd>
         <dt>Last commit</dt><dd>${escapeHTML(fmtDate(r.lastCommitDate))}</dd>
         <dt>Commits 90d</dt><dd>${num(r.commits90d)}</dd>
@@ -601,8 +710,11 @@ function openPanel(key) {
     </div>
   `;
 
+  const wasHidden = $('#panel').hidden;
   $('#panel').hidden = false;
   wirePanel(r);
+  // Opening the panel narrows the stage, so the map has to be re-laid out.
+  if (wasHidden) renderTreemap();
   renderTreemapSelection();
 }
 
@@ -612,10 +724,22 @@ function renderTreemapSelection() {
   if (el) el.classList.add('is-selected');
 }
 
-function closePanel() {
+function closePanel(force = false) {
+  if (state.panelPinned && !force) return;
+  if ($('#panel').hidden) return;
   $('#panel').hidden = true;
   state.selectedKey = null;
-  renderTreemapSelection();
+  renderTreemap();
+}
+
+function setPinned(on) {
+  state.panelPinned = on;
+  localStorage.setItem('atlas-pin', on ? '1' : '0');
+  $('#panel-pin').setAttribute('aria-pressed', String(on));
+  $('#panel-pin').textContent = on ? '📌 Pinned' : '📌 Pin';
+  $('#panel-pin').title = on
+    ? 'Pinned — the panel stays open when you click away'
+    : 'Pin the panel open (otherwise clicking away closes it)';
 }
 
 function wirePanel(r) {
@@ -736,10 +860,11 @@ function showTooltip(r, ev) {
       <dt>Open</dt><dd>${num(r.openIssues)} issues · ${num(r.openPRs)} PRs</dd>
       <dt>Where</dt><dd>${escapeHTML(PRESENCE_LABEL[r.presence] || r.presence)}</dd>
       ${s ? `<dt>Status</dt><dd>${s.glyph} ${escapeHTML(s.label)}</dd>` : ''}
-      ${v.priority ? `<dt>Priority</dt><dd>${'!'.repeat(v.priority)}</dd>` : ''}
+      ${v.priority ? `<dt>Priority</dt><dd>${escapeHTML(PRIORITY_LABEL[v.priority])}</dd>` : ''}
       ${r.dirtyFiles ? `<dt>Uncommitted</dt><dd>${num(r.dirtyFiles)} files</dd>` : ''}
       ${r.unpushedCommits ? `<dt>Unpushed</dt><dd>${num(r.unpushedCommits)} commits</dd>` : ''}
-      ${isStale(r) ? `<dt>⚠</dt><dd>moved since you judged it</dd>` : ''}
+      ${r.duplicateOf ? `<dt>⧉</dt><dd>duplicate of another clone</dd>` : ''}
+      ${isStale(r) ? `<dt>⚠</dt><dd>new work since you judged it</dd>` : ''}
     </dl>`;
   tip().hidden = false;
   moveTooltip(ev);
@@ -781,6 +906,7 @@ function wireGlobal() {
   stage.addEventListener('click', (e) => {
     const r = repoAt(e.target);
     if (r) openPanel(r.key);
+    else closePanel(); // clicking bare map closes an unpinned panel
   });
 
   $('#table-body').addEventListener('click', (e) => {
@@ -797,7 +923,8 @@ function wireGlobal() {
     });
   });
 
-  $('#panel-close').addEventListener('click', closePanel);
+  $('#panel-close').addEventListener('click', () => closePanel(true));
+  $('#panel-pin').addEventListener('click', () => setPinned(!state.panelPinned));
 
   const bind = (sel, key, transform = (v) => v) =>
     $(sel).addEventListener('input', (e) => {
@@ -807,9 +934,20 @@ function wireGlobal() {
 
   bind('#f-search', 'search');
   bind('#f-group', 'group');
-  bind('#f-color', 'color');
   bind('#f-size', 'size');
   bind('#f-hidden', 'showHidden');
+
+  $('#f-color').addEventListener('input', (e) => {
+    state.filters.color = e.target.value;
+    localStorage.setItem('atlas-color', e.target.value);
+    syncHueControl();
+    render();
+  });
+  $('#f-hue').addEventListener('input', (e) => {
+    state.filters.hue = e.target.value;
+    localStorage.setItem('atlas-hue', e.target.value);
+    render();
+  });
 
   $('#btn-table').addEventListener('click', (e) => {
     const on = e.target.getAttribute('aria-pressed') !== 'true';
@@ -817,6 +955,14 @@ function wireGlobal() {
     $('#table-view').hidden = !on;
     $('#stage').hidden = on;
     render();
+  });
+
+  // Clicking anywhere that isn't the map, the panel, or the controls dismisses
+  // an unpinned panel.
+  document.addEventListener('mousedown', (e) => {
+    if (state.panelPinned || $('#panel').hidden) return;
+    if (e.target.closest('#panel, .tile, .bar, #table-view')) return;
+    closePanel();
   });
 
   $('#btn-theme').addEventListener('click', () => {
@@ -836,9 +982,9 @@ function wireGlobal() {
   });
 
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') { closePanel(); return; }
     const tag = document.activeElement && document.activeElement.tagName;
     if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+    if (e.key === 'Escape') { closePanel(true); return; }
     if (!state.selectedKey || e.metaKey || e.ctrlKey || e.altKey) return;
     const r = state.repos.find((x) => x.key === state.selectedKey);
     if (!r) return;
@@ -848,12 +994,11 @@ function wireGlobal() {
       '2': () => setVerdict(r, { priority: 2 }),
       '3': () => setVerdict(r, { priority: 3 }),
       '0': () => setVerdict(r, { priority: undefined }),
-      d: () => setVerdict(r, { status: 'done' }),
-      a: () => setVerdict(r, { status: 'active' }),
-      s: () => setVerdict(r, { status: 'someday' }),
-      x: () => setVerdict(r, { status: 'dead' }),
       h: () => setVerdict(r, { hidden: !verdict(r.key).hidden }),
+      p: () => setPinned(!state.panelPinned),
     };
+    for (const s of STATUSES) map[s.key] = () => setVerdict(r, { status: s.id });
+
     const fn = map[e.key.toLowerCase()];
     if (fn) { e.preventDefault(); fn(); }
   });
@@ -866,6 +1011,36 @@ function wireGlobal() {
 }
 
 /* --------------------------------------------------------------- boot */
+
+/** The palette picker only means anything for single-hue encodings. */
+function syncHueControl() {
+  const usesRamp = ['recency', 'issues', 'status', 'priority'].includes(state.filters.color);
+  $('#ctl-hue').style.display = usesRamp ? '' : 'none';
+}
+
+/**
+ * Repos used to be keyed by GitHub slug, which collided whenever two folders
+ * held clones of one repo. Keys are now paths. Adopt any orphaned slug-keyed
+ * verdict onto the clone that carries that slug's history.
+ */
+function migrateVerdicts(verdicts, repos) {
+  const live = new Set(repos.map((r) => r.key));
+  const primaryBySlug = new Map();
+  for (const r of repos) {
+    if (r.slug && r.isPrimaryClone) primaryBySlug.set(`gh:${r.slug}`, r.key);
+  }
+  let moved = 0;
+  for (const oldKey of Object.keys(verdicts)) {
+    if (live.has(oldKey)) continue;
+    const newKey = primaryBySlug.get(oldKey);
+    if (!newKey || verdicts[newKey]) continue;
+    verdicts[newKey] = verdicts[oldKey];
+    delete verdicts[oldKey];
+    moved++;
+  }
+  if (moved) scheduleSave();
+  return verdicts;
+}
 
 async function boot() {
   const saved = localStorage.getItem('atlas-theme');
@@ -891,12 +1066,21 @@ async function boot() {
 
   state.inventory = payload.inventory;
   state.repos = payload.inventory.repos;
-  state.verdicts = payload.verdicts || {};
+  state.verdicts = migrateVerdicts(payload.verdicts || {}, state.repos);
+
+  // Restore what you last chose to look at.
+  state.filters.color = localStorage.getItem('atlas-color') || state.filters.color;
+  state.filters.hue = localStorage.getItem('atlas-hue') || state.filters.hue;
+  $('#f-color').value = state.filters.color;
+  $('#f-hue').value = state.filters.hue;
+  setPinned(localStorage.getItem('atlas-pin') === '1');
+  syncHueControl();
 
   const c = payload.inventory.counts;
   $('#scan-stamp').textContent =
-    `${c.total} projects · ${c.both} cloned & pushed · ${c.localOnly} local-only · ` +
-    `${c.remoteOnly} not cloned · scanned ${fmtAgo(payload.inventory.generatedAt)}`;
+    `${c.total} projects · ${num(c.openIssues)} open issues · ${c.localOnly} local-only · ` +
+    `${c.remoteOnly} not cloned · ${c.duplicateClones} duplicate clones · ` +
+    `scanned ${fmtAgo(payload.inventory.generatedAt)}`;
   $('#save-state').textContent = `${Object.keys(state.verdicts).length} judged`;
 
   wireGlobal();

@@ -71,20 +71,24 @@ const GIT_PROBE = `
 cd "$1" 2>/dev/null || exit 0
 export GIT_PAGER=cat
 echo "head=$(git rev-parse HEAD 2>/dev/null)"
-echo "commits=$(git rev-list --count HEAD 2>/dev/null)"
-echo "last=$(git log -1 --format=%cI 2>/dev/null)"
-echo "first=$(git log --reverse --format=%cI 2>/dev/null | head -1)"
+# --all counts every ref this clone knows about. Counting HEAD alone reports
+# whatever branch happens to be checked out, which is not a property of the project.
+echo "commits=$(git rev-list --count --all 2>/dev/null)"
+echo "commitsHead=$(git rev-list --count HEAD 2>/dev/null)"
+echo "last=$(git log -1 --format=%cI --all 2>/dev/null)"
+echo "first=$(git log --reverse --format=%cI --all 2>/dev/null | head -1)"
 echo "branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)"
 echo "origin=$(git remote get-url origin 2>/dev/null)"
 echo "remotes=$(git remote 2>/dev/null | tr '\\n' ',')"
 echo "dirty=$(git status --porcelain 2>/dev/null | wc -l | tr -d ' ')"
-echo "c30=$(git log --since=30.days.ago --oneline 2>/dev/null | wc -l | tr -d ' ')"
-echo "c90=$(git log --since=90.days.ago --oneline 2>/dev/null | wc -l | tr -d ' ')"
-echo "c365=$(git log --since=365.days.ago --oneline 2>/dev/null | wc -l | tr -d ' ')"
+echo "c30=$(git log --since=30.days.ago --oneline --all 2>/dev/null | wc -l | tr -d ' ')"
+echo "c90=$(git log --since=90.days.ago --oneline --all 2>/dev/null | wc -l | tr -d ' ')"
+echo "c365=$(git log --since=365.days.ago --oneline --all 2>/dev/null | wc -l | tr -d ' ')"
 echo "unpushed=$(git log --branches --not --remotes --oneline 2>/dev/null | wc -l | tr -d ' ')"
 echo "tracked=$(git ls-files 2>/dev/null | wc -l | tr -d ' ')"
+echo "localBranches=$(git for-each-ref --format='%(refname)' refs/heads 2>/dev/null | wc -l | tr -d ' ')"
 echo "--authors--"
-git --no-pager shortlog -sne HEAD 2>/dev/null
+git --no-pager shortlog -sne --all 2>/dev/null
 `;
 
 function probeRepo(dir) {
@@ -301,6 +305,8 @@ function main() {
       remote,
       head: kv.head || null,
       commits: +kv.commits || 0,
+      commitsHead: +kv.commitsHead || 0,
+      localBranches: +kv.localBranches || 0,
       firstCommitDate: kv.first || null,
       lastCommitDate: kv.last || null,
       branch: kv.branch || null,
@@ -366,10 +372,29 @@ function main() {
     return false;
   }
 
+  // Several working copies can point at one GitHub repo (backups, review
+  // checkouts, archived snapshots). They are separate things on disk and each
+  // gets its own tile — keyed by path, because a slug is not unique.
+  // The clone with the most history is "primary" and carries the GitHub
+  // metadata; the others would otherwise double-count issues and PRs.
+  const slugToLocals = new Map();
+  for (const l of locals) {
+    const s = l.remote && l.remote.host.includes('github.com') ? l.remote.slug : null;
+    if (!s) continue;
+    if (!slugToLocals.has(s)) slugToLocals.set(s, []);
+    slugToLocals.get(s).push(l);
+  }
+  for (const list of slugToLocals.values()) {
+    list.sort((a, b) => b.commits - a.commits || a.path.localeCompare(b.path));
+  }
+  const claimedSlugs = new Set([...slugToLocals.keys()].map((s) => s.toLowerCase()));
+
   // Local repos first — they carry the real commit history
   for (const l of locals) {
     const slug = l.remote && l.remote.host.includes('github.com') ? l.remote.slug : null;
     const g = slug ? ghBySlug.get(slug.toLowerCase()) : null;
+    const siblings = slug ? slugToLocals.get(slug) : [l];
+    const isPrimary = !slug || siblings[0] === l;
 
     const myCommits = l.authors.filter(isMyAuthor).reduce((s, a) => s + a.commits, 0);
 
@@ -381,10 +406,13 @@ function main() {
 
     const owner = (g && g.owner) || (l.remote && l.remote.owner) || null;
 
-    const key = slug ? `gh:${slug}` : `local:${l.path}`;
+    const key = `local:${l.path}`;
     merged.set(key, {
       key,
       slug,
+      clonesOfSlug: siblings.length,
+      isPrimaryClone: isPrimary,
+      duplicateOf: isPrimary ? null : `local:${siblings[0].path}`,
       name: (g && g.name) || (l.remote && l.remote.name) || l.dirName,
       dirName: l.dirName,
       owner,
@@ -397,7 +425,11 @@ function main() {
       remoteHost: l.remote ? l.remote.host : null,
       url: g ? g.url : null,
       description: g ? g.description : '',
+      // Across every ref this clone knows about, not just the checked-out branch.
       commits: l.commits,
+      commitsHead: l.commitsHead,
+      remoteCommits: g ? g.remoteCommits : null,
+      localBranches: l.localBranches,
       myCommits,
       myCommitShare: l.commits ? myCommits / l.commits : 0,
       // What YOU poured in, as opposed to what the repo contains. A 67k-commit
@@ -420,9 +452,11 @@ function main() {
       forkOf: g ? g.forkOf : null,
       isArchived: g ? g.isArchived : false,
       isPrivate: g ? g.isPrivate : null,
-      openIssues: g ? g.openIssues : null,
-      openPRs: g ? g.openPRs : null,
-      stars: g ? g.stars : null,
+      // Only the primary clone carries these, or four working copies of one
+      // repo would report its issue count four times.
+      openIssues: g && isPrimary ? g.openIssues : null,
+      openPRs: g && isPrimary ? g.openPRs : null,
+      stars: g && isPrimary ? g.stars : null,
       language: g ? g.language : null,
       topics: g ? g.topics : [],
       diskKB: g ? g.diskKB : null,
@@ -432,7 +466,7 @@ function main() {
   // GitHub repos with no local clone
   for (const g of ghRepos) {
     const key = `gh:${g.slug}`;
-    if (merged.has(key)) continue;
+    if (merged.has(key) || claimedSlugs.has(g.slug.toLowerCase())) continue;
     merged.set(key, {
       key,
       slug: g.slug,
@@ -448,7 +482,13 @@ function main() {
       remoteHost: 'github.com',
       url: g.url,
       description: g.description,
+      clonesOfSlug: 0,
+      isPrimaryClone: true,
+      duplicateOf: null,
       commits: g.remoteCommits,
+      commitsHead: g.remoteCommits,
+      remoteCommits: g.remoteCommits,
+      localBranches: null,
       myCommits: null, // never cloned, so per-author attribution is unavailable
       myCommitShare: 0,
       // No clone to attribute against: credit a repo you own, credit a fork nothing.
@@ -520,6 +560,9 @@ function main() {
           both: repos.filter((r) => r.presence === 'both').length,
           localOnly: repos.filter((r) => r.presence === 'local-only').length,
           remoteOnly: repos.filter((r) => r.presence === 'remote-only').length,
+          duplicateClones: repos.filter((r) => r.duplicateOf).length,
+          openIssues: repos.reduce((s, r) => s + (r.openIssues || 0), 0),
+          openPRs: repos.reduce((s, r) => s + (r.openPRs || 0), 0),
         },
         repos,
       },

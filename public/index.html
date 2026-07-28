@@ -28,6 +28,7 @@
         <option value="status">Status</option>
         <option value="presence">Local vs remote</option>
         <option value="language">Language</option>
+        <option value="none">Nothing (one big map)</option>
       </select>
     </label>
 
@@ -35,9 +36,25 @@
       <span>Color by</span>
       <select id="f-color">
         <option value="recency">Recency of work</option>
+        <option value="prov-recency">Mine vs outside × recency</option>
+        <option value="issues">Open issues</option>
         <option value="status">Status (your call)</option>
         <option value="provenance">Provenance</option>
         <option value="priority">Priority</option>
+      </select>
+    </label>
+
+    <label class="ctl" id="ctl-hue">
+      <span>Palette</span>
+      <select id="f-hue">
+        <option value="blue">Blue</option>
+        <option value="violet">Violet</option>
+        <option value="aqua">Aqua</option>
+        <option value="green">Green</option>
+        <option value="yellow">Amber</option>
+        <option value="orange">Orange</option>
+        <option value="magenta">Magenta</option>
+        <option value="red">Red</option>
       </select>
     </label>
 
@@ -47,6 +64,8 @@
         <option value="sqrt-effort">&#8730; commits by you</option>
         <option value="sqrt-commits">&#8730; all commits</option>
         <option value="commits">all commits (linear)</option>
+        <option value="sqrt-issues">&#8730; open issues</option>
+        <option value="issues">open issues (linear)</option>
         <option value="sqrt-files">&#8730; tracked files</option>
         <option value="equal">equal</option>
       </select>
@@ -67,6 +86,7 @@
 
 <div class="legend" id="legend" aria-live="polite"></div>
 
+<div class="workspace">
 <main id="stage" tabindex="0" aria-label="Project treemap">
   <div id="treemap"></div>
 </main>
@@ -86,20 +106,27 @@
   </table>
 </section>
 
-<div id="tooltip" role="tooltip" hidden></div>
-
 <aside id="panel" hidden aria-label="Project detail">
-  <button type="button" class="panel-close" id="panel-close" aria-label="Close">×</button>
+  <div class="panel-tools">
+    <button type="button" id="panel-pin" aria-pressed="false"
+            title="Pin the panel open">📌 Pin</button>
+    <button type="button" class="panel-close" id="panel-close" aria-label="Close">×</button>
+  </div>
   <div id="panel-body"></div>
 </aside>
+</div>
+
+<div id="tooltip" role="tooltip" hidden></div>
 
 <footer class="hint">
   <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> priority · <kbd>0</kbd> none ·
-  <kbd>d</kbd> done · <kbd>a</kbd> active · <kbd>s</kbd> someday · <kbd>x</kbd> dead ·
-  <kbd>h</kbd> hide · <kbd>esc</kbd> close
+  <kbd>a</kbd> active · <kbd>u</kbd> in use · <kbd>s</kbd> someday ·
+  <kbd>d</kbd> done · <kbd>x</kbd> dead ·
+  <kbd>h</kbd> hide · <kbd>p</kbd> pin panel · <kbd>esc</kbd> close
   <span class="save-state" id="save-state"></span>
 </footer>
 
+<script src="/ramps.js"></script>
 <script src="/app.js"></script>
 </body>
 </html>
