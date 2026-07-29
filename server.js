@@ -12,7 +12,7 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
-const { execFile } = require('child_process');
+const { execFile, spawn } = require('child_process');
 
 const PORT = +(process.env.ATLAS_PORT || 4317);
 const HOST = '127.0.0.1';
@@ -20,6 +20,22 @@ const DATA_DIR = path.join(__dirname, 'data');
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const INVENTORY = path.join(DATA_DIR, 'inventory.json');
 const VERDICTS = path.join(DATA_DIR, 'verdicts.json');
+const PREFS = path.join(DATA_DIR, 'prefs.json');
+
+/* ------------------------------------------------------------------ *
+ * Live events. The menu bar app writes prefs; every open page hears
+ * about it over SSE and applies them. Same channel announces scans.
+ * ------------------------------------------------------------------ */
+let sseClients = [];
+let scanning = false;
+
+function broadcast(event, data) {
+  sseClients = sseClients.filter((c) => !c.writableEnded);
+  const msg = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+  for (const c of sseClients) c.write(msg);
+}
+
+setInterval(() => broadcast('ping', { t: Date.now() }), 25000).unref();
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -77,6 +93,72 @@ const server = http.createServer(async (req, res) => {
       return send(res, 503, JSON.stringify({ error: 'no inventory yet — run `npm run scan`' }));
     }
     return send(res, 200, JSON.stringify({ inventory, verdicts: readJSON(VERDICTS, {}) }));
+  }
+
+  // Lightweight state for the menu bar: cheap enough to hit on every menu open.
+  if (route === '/api/status' && req.method === 'GET') {
+    const inv = readJSON(INVENTORY, null);
+    return send(res, 200, JSON.stringify({
+      up: true,
+      scanning,
+      counts: inv ? inv.counts : null,
+      generatedAt: inv ? inv.generatedAt : null,
+      judged: Object.keys(readJSON(VERDICTS, {})).length,
+      prefs: readJSON(PREFS, {}),
+    }));
+  }
+
+  if (route === '/api/prefs' && req.method === 'GET') {
+    return send(res, 200, JSON.stringify(readJSON(PREFS, {})));
+  }
+
+  // Merge-in view preferences (from the menu bar or the page itself) and tell
+  // every listener. Prefs are view state — never judgments.
+  if (route === '/api/prefs' && req.method === 'POST') {
+    try {
+      const patch = JSON.parse(await readBody(req));
+      if (!patch || typeof patch !== 'object' || Array.isArray(patch)) {
+        return send(res, 400, JSON.stringify({ error: 'expected an object' }));
+      }
+      const prefs = { ...readJSON(PREFS, {}), ...patch };
+      for (const k of Object.keys(prefs)) if (prefs[k] === null) delete prefs[k];
+      writeJSONAtomic(PREFS, prefs);
+      broadcast('prefs', prefs);
+      return send(res, 200, JSON.stringify(prefs));
+    } catch (err) {
+      return send(res, 400, JSON.stringify({ error: err.message }));
+    }
+  }
+
+  if (route === '/api/events' && req.method === 'GET') {
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-store',
+      Connection: 'keep-alive',
+    });
+    res.write(`event: hello\ndata: ${JSON.stringify({ scanning })}\n\n`);
+    sseClients.push(res);
+    req.on('close', () => { sseClients = sseClients.filter((c) => c !== res); });
+    return undefined;
+  }
+
+  // Kick off a re-harvest. The scan writes facts only; verdicts are untouchable.
+  if (route === '/api/scan' && req.method === 'POST') {
+    if (scanning) return send(res, 409, JSON.stringify({ error: 'scan already running' }));
+    scanning = true;
+    broadcast('scan-start', {});
+    const child = spawn(process.execPath, [path.join(__dirname, 'scan.js')], {
+      cwd: __dirname,
+      stdio: ['ignore', 'ignore', 'pipe'],
+      env: { ...process.env, PATH: `/opt/homebrew/bin:${process.env.PATH || '/usr/bin:/bin'}` },
+    });
+    let errTail = '';
+    child.stderr.on('data', (d) => { errTail = (errTail + d).slice(-2000); });
+    child.on('close', (code) => {
+      scanning = false;
+      broadcast('scan-done', { ok: code === 0, code, errTail: code === 0 ? undefined : errTail });
+    });
+    return send(res, 202, JSON.stringify({ started: true }));
   }
 
   if (route === '/api/verdicts' && req.method === 'PUT') {

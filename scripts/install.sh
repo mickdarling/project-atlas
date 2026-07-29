@@ -21,16 +21,25 @@ if [ -n "$OLD_PID" ]; then
   sleep 1
 fi
 
-for name in com.mickdarling.project-atlas com.mickdarling.project-atlas-scan; do
+# Build the menu bar app (native Swift, no dependencies).
+echo "building AtlasMenu…"
+mkdir -p "$DIR/app/AtlasMenu.app/Contents/MacOS"
+swiftc -O "$DIR/menubar/AtlasMenu.swift" -o "$DIR/app/AtlasMenu.app/Contents/MacOS/AtlasMenu"
+codesign --force --sign - "$DIR/app/AtlasMenu.app" 2>/dev/null || true
+
+# Apps go in BEFORE the agents load — the menu agent execs the installed binary.
+rm -rf "$HOME/Applications/Atlas.app" "$HOME/Applications/AtlasMenu.app"
+cp -R "$DIR/app/Atlas.app" "$HOME/Applications/Atlas.app"
+cp -R "$DIR/app/AtlasMenu.app" "$HOME/Applications/AtlasMenu.app"
+chmod +x "$HOME/Applications/Atlas.app/Contents/MacOS/Atlas" \
+         "$HOME/Applications/AtlasMenu.app/Contents/MacOS/AtlasMenu"
+
+for name in com.mickdarling.project-atlas com.mickdarling.project-atlas-scan com.mickdarling.project-atlas-menu; do
   # bootout is idempotent-ish; ignore "not loaded"
   launchctl bootout "gui/$UID_N/$name" 2>/dev/null || true
   cp "$DIR/launchagents/$name.plist" "$AGENTS/"
   launchctl bootstrap "gui/$UID_N" "$AGENTS/$name.plist"
 done
-
-rm -rf "$HOME/Applications/Atlas.app"
-cp -R "$DIR/app/Atlas.app" "$HOME/Applications/Atlas.app"
-chmod +x "$HOME/Applications/Atlas.app/Contents/MacOS/Atlas"
 
 sleep 1
 if curl -s -o /dev/null --max-time 3 http://127.0.0.1:4317/api/data; then
@@ -40,4 +49,5 @@ else
   exit 1
 fi
 echo "✓ daily scan scheduled for 07:00 (log: $LOGS/scan.log)"
+echo "✓ menu bar app running (⊞ icon; log: $LOGS/menu.log)"
 echo "✓ Atlas.app installed in ~/Applications"

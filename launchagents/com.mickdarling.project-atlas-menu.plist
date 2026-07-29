@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.mickdarling.project-atlas-menu</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/mick/Applications/AtlasMenu.app/Contents/MacOS/AtlasMenu</string>
+  </array>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <!-- Deliberately NOT KeepAlive: "Quit Atlas Menu" should mean quit,
+       not respawn. It comes back at next login or via install.sh. -->
+  <key>KeepAlive</key>
+  <false/>
+
+  <key>StandardOutPath</key>
+  <string>/Users/mick/Library/Logs/project-atlas/menu.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/mick/Library/Logs/project-atlas/menu.log</string>
+</dict>
+</plist>

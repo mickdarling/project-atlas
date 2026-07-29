@@ -27,6 +27,25 @@ of any kind from the page.
   at 07:00 so the map opens fresh. Facts only; it can never touch `verdicts.json`.
 - **`~/Applications/Atlas.app`** — Dock-able launcher: makes sure the agent is up,
   opens the dashboard.
+- **Menu bar app** (`AtlasMenu.app`, the ⊞ icon) — native Swift, compiled by the
+  installer, no dependencies. Status at a glance, **Open Dashboard**, **Rescan
+  Now**, **Stop/Start Server**, and the full view configuration: Group By, Color
+  By, Area, Palette, Scale, Showing, Theme — plus **Map Only**, which strips the
+  page to just the treemap.
+
+### How the menu bar drives the page
+
+The server holds `data/prefs.json` (view state only — never judgments) and streams
+changes over Server-Sent Events. The menu bar POSTs a pref; every open page hears
+it and applies it live; the page pushes its own toolbar changes back up the same
+channel, so the menu's checkmarks stay honest. Echo loops are broken by a no-op
+guard — applying a state you're already in does nothing.
+
+**Map Only** is the payoff: configuration lives in the menu bar, so the page can
+be nothing but the map on a big screen. A faint floating `⚙ controls` button is
+the way back from the page itself. Rescans triggered from the menu (or the 07:00
+agent) soft-refresh every open page when they finish — new facts, same view
+state, no reload.
 
 Logs land in `~/Library/Logs/project-atlas/`. To uninstall:
 `launchctl bootout gui/$UID/com.mickdarling.project-atlas{,-scan}` and delete the

@@ -7,3 +7,4 @@ data/*.tmp
 
 .DS_Store
 node_modules/
+data/prefs.json

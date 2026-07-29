@@ -1454,6 +1454,7 @@ function wireGlobal() {
   const bind = (sel, key, transform = (v) => v) =>
     $(sel).addEventListener('input', (e) => {
       state.filters[key] = transform(e.target.type === 'checkbox' ? e.target.checked : e.target.value);
+      if (key !== 'search') pushPrefs(); // search is transient, not configuration
       render();
     });
 
@@ -1466,6 +1467,7 @@ function wireGlobal() {
     state.filters.color = e.target.value;
     localStorage.setItem('atlas-color', e.target.value);
     syncHueControl();
+    pushPrefs();
     render();
   });
   $('#f-hue').addEventListener('input', (e) => setPalette(e.target.value, state.filters.hueTo));
@@ -1479,8 +1481,12 @@ function wireGlobal() {
   $('#f-scale').addEventListener('input', (e) => {
     state.filters.scale = e.target.value;
     localStorage.setItem('atlas-scale', e.target.value);
+    pushPrefs();
     render();
   });
+
+  const chromeExit = $('#chrome-exit');
+  if (chromeExit) chromeExit.addEventListener('click', () => setChrome('full'));
 
   $('#btn-table').addEventListener('click', (e) => {
     const on = e.target.getAttribute('aria-pressed') !== 'true';
@@ -1509,6 +1515,7 @@ function wireGlobal() {
     localStorage.setItem('atlas-theme', next);
     _rampCache.clear(); // ramps are stepped per mode, not inverted
     renderPaletteBadge();
+    pushPrefs();
     render();
   });
 
@@ -1640,6 +1647,105 @@ function migrateVerdicts(verdicts, repos) {
   return verdicts;
 }
 
+/* ------------------------------------------------------ live prefs *
+ * The menu bar app owns a copy of the view configuration. It POSTs to
+ * /api/prefs; the server broadcasts over SSE; every open page applies.
+ * The page pushes its own changes up the same way, so the menu's
+ * checkmarks stay honest. Loops are broken by a no-op guard: applying
+ * a state you are already in changes nothing and pushes nothing.
+ * ------------------------------------------------------------------ */
+
+const PREF_KEYS = ['group', 'color', 'size', 'hue', 'hueTo', 'scale', 'visibility'];
+
+function prefsSnapshot() {
+  const p = { theme: themeName(), chrome: document.body.classList.contains('map-only') ? 'map' : 'full' };
+  for (const k of PREF_KEYS) p[k] = state.filters[k];
+  return p;
+}
+
+let _pushTimer = null;
+function pushPrefs() {
+  if (window.__ATLAS_DATA__) return; // inline snapshot: nowhere to push
+  clearTimeout(_pushTimer);
+  _pushTimer = setTimeout(() => {
+    fetch('/api/prefs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(prefsSnapshot()),
+    }).catch(() => {});
+  }, 250);
+}
+
+function applyPrefs(p) {
+  if (!p || typeof p !== 'object') return;
+  const before = JSON.stringify(prefsSnapshot());
+
+  for (const k of PREF_KEYS) {
+    if (p[k] !== undefined && p[k] !== null) state.filters[k] = p[k];
+  }
+  if (p.theme && p.theme !== themeName()) {
+    document.documentElement.dataset.theme = p.theme;
+    localStorage.setItem('atlas-theme', p.theme);
+    _rampCache.clear();
+  }
+  if (p.chrome) setChrome(p.chrome, false);
+
+  if (JSON.stringify(prefsSnapshot()) === before) return; // no-op: break echo loops
+
+  // Reflect into the visible controls so the toolbar tells the truth.
+  $('#f-group').value = state.filters.group;
+  $('#f-color').value = state.filters.color;
+  $('#f-size').value = state.filters.size;
+  $('#f-visibility').value = state.filters.visibility;
+  $('#f-hue').value = state.filters.hue;
+  $('#f-hue-to').value = state.filters.hueTo;
+  $('#f-scale').value = state.filters.scale;
+  syncHueControl();
+  render();
+}
+
+/** Map-only: strip the page to the treemap. The menu bar (or the floating
+ *  button) is the way back — the whole point is that the toolbar is gone. */
+function setChrome(mode, push = true) {
+  document.body.classList.toggle('map-only', mode === 'map');
+  const btn = $('#chrome-exit');
+  if (btn) btn.hidden = mode !== 'map';
+  render();
+  if (push) pushPrefs();
+}
+
+function connectEvents() {
+  if (window.__ATLAS_DATA__ || typeof EventSource === 'undefined') return;
+  const es = new EventSource('/api/events');
+  es.addEventListener('prefs', (e) => {
+    try { applyPrefs(JSON.parse(e.data)); } catch { /* malformed event */ }
+  });
+  es.addEventListener('scan-start', () => {
+    $('#scan-stamp').textContent = 'rescanning…';
+  });
+  es.addEventListener('scan-done', async (e) => {
+    let ok = true;
+    try { ok = JSON.parse(e.data).ok; } catch { /* assume ok */ }
+    if (!ok) { $('#scan-stamp').textContent = 'scan failed — see ~/Library/Logs/project-atlas/scan.log'; return; }
+    // Soft refresh: new facts, same page state, verdicts re-merged.
+    try {
+      const res = await fetch('/api/data');
+      const payload = await res.json();
+      if (!res.ok) return;
+      state.inventory = payload.inventory;
+      state.repos = payload.inventory.repos;
+      state.verdicts = migrateVerdicts(payload.verdicts || {}, state.repos);
+      const c = payload.inventory.counts;
+      $('#scan-stamp').textContent =
+        `${c.total} projects · ${num(c.openIssues)} open issues · ${c.localOnly} local-only · ` +
+        `${c.remoteOnly} not cloned · ${c.duplicateClones} duplicate clones · ` +
+        `scanned ${fmtAgo(payload.inventory.generatedAt)}`;
+      render();
+    } catch { /* server briefly away; next event will catch up */ }
+  });
+  // EventSource auto-reconnects; nothing to do on error.
+}
+
 async function boot() {
   const saved = localStorage.getItem('atlas-theme');
   document.documentElement.dataset.theme =
@@ -1678,6 +1784,24 @@ async function boot() {
   $('#f-hue-to').value = state.filters.hueTo;
   $('#f-scale').value = state.filters.scale;
   setPinned(localStorage.getItem('atlas-pin') === '1');
+
+  // Server-held prefs (set from the menu bar, shared across pages) beat the
+  // page's own localStorage memory.
+  if (!window.__ATLAS_DATA__) {
+    try {
+      const p = await fetch('/api/prefs').then((r) => r.json());
+      for (const k of PREF_KEYS) if (p[k] !== undefined) state.filters[k] = p[k];
+      if (p.theme) document.documentElement.dataset.theme = p.theme;
+      if (p.chrome === 'map') setChrome('map', false);
+      $('#f-group').value = state.filters.group;
+      $('#f-color').value = state.filters.color;
+      $('#f-size').value = state.filters.size;
+      $('#f-visibility').value = state.filters.visibility;
+      $('#f-hue').value = state.filters.hue;
+      $('#f-hue-to').value = state.filters.hueTo;
+      $('#f-scale').value = state.filters.scale;
+    } catch { /* no prefs yet */ }
+  }
   syncHueControl();
 
   const c = payload.inventory.counts;
@@ -1688,6 +1812,7 @@ async function boot() {
   $('#save-state').textContent = `${Object.keys(state.verdicts).length} judged`;
 
   wireGlobal();
+  connectEvents();
   render();
 }
 

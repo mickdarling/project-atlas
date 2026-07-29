@@ -630,6 +630,29 @@ main#stage[hidden] { display: none; }
 }
 .save-state { margin-left: auto; font-variant-numeric: tabular-nums; }
 
+/* Map-only: the whole window is the treemap. Configuration lives in the
+   menu bar; the one floating button is the way back from the page itself. */
+body.map-only .bar,
+body.map-only .legend,
+body.map-only .hint { display: none; }
+
+#chrome-exit {
+  position: fixed;
+  right: 10px;
+  bottom: 10px;
+  z-index: 50;
+  font: 600 11px/1 system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: var(--text-secondary);
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 7px 12px;
+  cursor: pointer;
+  opacity: 0.55;
+  transition: opacity 120ms ease;
+}
+#chrome-exit:hover { opacity: 1; color: var(--text-primary); }
+
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; }
 }
