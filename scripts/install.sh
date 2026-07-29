@@ -38,7 +38,16 @@ for name in com.mickdarling.project-atlas com.mickdarling.project-atlas-scan com
   # bootout is idempotent-ish; ignore "not loaded"
   launchctl bootout "gui/$UID_N/$name" 2>/dev/null || true
   cp "$DIR/launchagents/$name.plist" "$AGENTS/"
-  launchctl bootstrap "gui/$UID_N" "$AGENTS/$name.plist"
+  # bootstrap right after bootout can hit the old job still tearing down
+  # (EIO). Give launchd a beat and retry.
+  ok=""
+  for attempt in 1 2 3 4; do
+    if launchctl bootstrap "gui/$UID_N" "$AGENTS/$name.plist" 2>/dev/null; then
+      ok=1; break
+    fi
+    sleep 1
+  done
+  [ -n "$ok" ] || { echo "✗ could not bootstrap $name"; exit 1; }
 done
 
 sleep 1

@@ -89,6 +89,18 @@ echo "tracked=$(git ls-files 2>/dev/null | wc -l | tr -d ' ')"
 echo "localBranches=$(git for-each-ref --format='%(refname)' refs/heads 2>/dev/null | wc -l | tr -d ' ')"
 echo "--authors--"
 git --no-pager shortlog -sne --all 2>/dev/null
+echo "--churn--"
+# Lines added+deleted per author email, across all refs. Commit count alone
+# under-measures dense work: one commit with 3,000 lines is not one unit.
+# Guardrails so DATA cannot impersonate WORK: skip any single file changed by
+# more than 5,000 lines in one commit (generated output, data dumps — nobody
+# hand-writes that), and skip lockfiles.
+git --no-pager log --all --format='@%ae' --numstat 2>/dev/null | awk '
+  /^@/ { e = tolower(substr($0, 2)); next }
+  NF >= 3 && $1 ~ /^[0-9]+$/ && $2 ~ /^[0-9]+$/ && ($1 + $2) <= 5000 \
+    && $3 !~ /package-lock\.json|yarn\.lock|pnpm-lock|Cargo\.lock|\.min\.js$|\.map$/ \
+    { a[e] += $1 + $2 }
+  END { for (k in a) printf "%d %s\\n", a[k], k }'
 `;
 
 function probeRepo(dir) {
@@ -105,7 +117,8 @@ function probeRepo(dir) {
     return null;
   }
 
-  const [kvPart, authorPart = ''] = out.split('--authors--');
+  const [kvPart, rest = ''] = out.split('--authors--');
+  const [authorPart = '', churnPart = ''] = rest.split('--churn--');
   const kv = {};
   for (const line of kvPart.split('\n')) {
     const i = line.indexOf('=');
@@ -118,7 +131,13 @@ function probeRepo(dir) {
     if (m) authors.push({ commits: +m[1], name: m[2], email: m[3].toLowerCase() });
   }
 
-  return { kv, authors };
+  const churnByEmail = new Map();
+  for (const line of churnPart.split('\n')) {
+    const m = line.match(/^(\d+)\s+(.+)$/);
+    if (m) churnByEmail.set(m[2].trim(), +m[1]);
+  }
+
+  return { kv, authors, churnByEmail };
 }
 
 /* ------------------------------------------------------------------ *
@@ -295,7 +314,7 @@ function main() {
     done++;
     if (done % 20 === 0) log(`  probed ${done}/${dirs.length}`);
     if (!probed) continue;
-    const { kv, authors } = probed;
+    const { kv, authors, churnByEmail } = probed;
     const remote = parseRemote(kv.origin);
     locals.push({
       path: path.relative(ROOT, dir),
@@ -317,6 +336,7 @@ function main() {
       unpushedCommits: +kv.unpushed || 0,
       trackedFiles: +kv.tracked || 0,
       authors,
+      churnByEmail,
     });
   }
 
@@ -398,6 +418,16 @@ function main() {
 
     const myCommits = l.authors.filter(isMyAuthor).reduce((s, a) => s + a.commits, 0);
 
+    let churn = 0, myChurn = 0;
+    for (const [email, lines] of l.churnByEmail || []) {
+      churn += lines;
+      if (myEmails.has(email)) myChurn += lines;
+    }
+    // A single "import everything" commit is an event, not a body of work.
+    // Churn credit is capped at 2,000 lines per commit.
+    churn = Math.min(churn, l.commits * 2000);
+    myChurn = Math.min(myChurn, myCommits * 2000);
+
     let provenance;
     if (g && g.isFork) provenance = 'fork';
     else if (!l.remote) provenance = myCommits > 0 || l.commits > 0 ? 'mine' : 'unknown';
@@ -435,6 +465,8 @@ function main() {
       // What YOU poured in, as opposed to what the repo contains. A 67k-commit
       // fork of someone else's project is not 67k commits of your work.
       effort: myCommits,
+      churn,
+      myChurn,
       firstCommitDate: l.firstCommitDate,
       lastCommitDate: l.lastCommitDate,
       lastActivity: maxDate(l.lastCommitDate, g && g.pushedAt),
@@ -493,6 +525,8 @@ function main() {
       myCommitShare: 0,
       // No clone to attribute against: credit a repo you own, credit a fork nothing.
       effort: g.isFork ? 0 : g.remoteCommits,
+      churn: null, // needs a clone to measure
+      myChurn: null,
       firstCommitDate: g.createdAt,
       lastCommitDate: g.remoteLastCommit || g.pushedAt,
       lastActivity: g.pushedAt || g.remoteLastCommit,

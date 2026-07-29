@@ -40,7 +40,11 @@ func launchctl(_ args: [String]) {
 
 // MARK: - Option vocabulary (mirrors the page's controls)
 
-struct Opt { let value: String; let label: String }
+struct Opt {
+    let value: String
+    let label: String
+    var tip: String? = nil
+}
 
 let SECTIONS: [(key: String, title: String, opts: [Opt])] = [
     ("group", "Group by", [
@@ -53,21 +57,36 @@ let SECTIONS: [(key: String, title: String, opts: [Opt])] = [
         Opt(value: "none", label: "Nothing (one big map)"),
     ]),
     ("color", "Color by", [
-        Opt(value: "recency", label: "Recency of work"),
-        Opt(value: "prov-recency", label: "Mine vs outside × recency"),
-        Opt(value: "issues", label: "Open issues"),
-        Opt(value: "status", label: "Status"),
-        Opt(value: "provenance", label: "Provenance"),
-        Opt(value: "priority", label: "Priority"),
+        Opt(value: "recency", label: "Recency of work",
+            tip: "How recently the last commit or push happened. Darker/higher = fresher."),
+        Opt(value: "prov-recency", label: "Mine vs outside × recency",
+            tip: "Hue = whose project it is (blue mine, amber a fork, green someone else's clone); lightness = how recently touched."),
+        Opt(value: "issues", label: "Open issues",
+            tip: "Open GitHub issue count, binned none → 100+."),
+        Opt(value: "status", label: "Status",
+            tip: "Your own triage call (active / in use / someday / done / dead). Untriaged repos stay grey."),
+        Opt(value: "provenance", label: "Provenance",
+            tip: "Mine vs fork vs clone of someone else's — detected, with your overrides."),
+        Opt(value: "priority", label: "Priority",
+            tip: "Your own high / medium / low marks. Unset stays grey."),
     ]),
     ("size", "Area", [
-        Opt(value: "sqrt-effort", label: "√ commits by me"),
-        Opt(value: "sqrt-commits", label: "√ all commits"),
-        Opt(value: "commits", label: "All commits (linear)"),
-        Opt(value: "sqrt-issues", label: "√ open issues"),
-        Opt(value: "issues", label: "Open issues (linear)"),
-        Opt(value: "sqrt-files", label: "√ tracked files"),
-        Opt(value: "equal", label: "Equal"),
+        Opt(value: "sqrt-work", label: "√ work by me (commits + lines)",
+            tip: "Tile area ∝ √(your commits + your changed lines ÷ 100). Both kinds of work count: seven tiny edits and one 3,000-line commit are both real sessions."),
+        Opt(value: "sqrt-effort", label: "√ commits by me",
+            tip: "Tile area ∝ √(commits YOU authored, counted across every branch). Your investment: forks and clones of other people's work shrink to nothing. √ compresses the range so small projects stay visible."),
+        Opt(value: "sqrt-commits", label: "√ all commits",
+            tip: "Tile area ∝ √(every commit in the repo, all branches, whoever wrote them). A big fork looks big even though the work isn't yours."),
+        Opt(value: "commits", label: "All commits (linear)",
+            tip: "Area is exactly proportional to total commits — the unflattering truth. Big repos dominate and small ones may not get a pixel."),
+        Opt(value: "sqrt-issues", label: "√ open issues",
+            tip: "Tile area ∝ √(open GitHub issues). If issues are where your ideas land, this is the idea map."),
+        Opt(value: "issues", label: "Open issues (linear)",
+            tip: "Area exactly proportional to open issues. mcp-server's 860 will dwarf everything."),
+        Opt(value: "sqrt-files", label: "√ tracked files",
+            tip: "Tile area ∝ √(files under git). How much thing is there, regardless of who built it."),
+        Opt(value: "equal", label: "Equal",
+            tip: "Every project gets the same tile. Pure census — size carries no meaning."),
     ]),
     ("__palette", "Palette", [
         Opt(value: "red:aqua", label: "Red → Aqua"),
@@ -146,7 +165,10 @@ final class PanelController: NSViewController, NSMenuDelegate {
             let popup = NSPopUpButton(frame: .zero, pullsDown: false)
             popup.controlSize = .small
             popup.font = .systemFont(ofSize: 12)
-            for o in section.opts { popup.addItem(withTitle: o.label) }
+            for o in section.opts {
+                popup.addItem(withTitle: o.label)
+                popup.lastItem?.toolTip = o.tip // hover an option to see what it means
+            }
             popup.target = self
             popup.action = #selector(popupChanged(_:))
             popup.identifier = NSUserInterfaceItemIdentifier(section.key)
@@ -302,6 +324,7 @@ class AppDelegate: NSResponder, NSApplicationDelegate, NSPopoverDelegate {
         panel.owner = self
         popover.contentViewController = panel
         popover.behavior = .transient // click-away / Esc still close it
+        popover.animates = false // snap open/closed; the fade reads as lag
         popover.delegate = self
     }
 

@@ -26,7 +26,7 @@ const state = {
     hue: 'red',
     hueTo: 'aqua',
     scale: 'auto',
-    size: 'sqrt-effort',
+    size: 'sqrt-work',
     visibility: 'visible',
   },
   panelPinned: false,
@@ -141,6 +141,35 @@ const PRESENCE_LABEL = {
   'remote-only': 'On GitHub — not cloned here',
 };
 
+/* Plain-language definitions for the metric options. Shown as hover tooltips
+ * on the toolbar options and mirrored in the menu bar panel. */
+const SIZE_DEFS = {
+  'sqrt-work': 'Tile area ∝ √(your commits + your changed lines ÷ 100). Both kinds of work count: seven tiny edits and one 3,000-line commit are both real sessions. Forks and clones of other people’s work shrink to nothing.',
+  'sqrt-effort': 'Tile area ∝ √(commits YOU authored, across every branch). Your investment by commit count alone — dense single commits under-count here. Forks and clones of other people’s work shrink to nothing.',
+  'sqrt-commits': 'Tile area ∝ √(every commit in the repo, all branches, whoever wrote them). A big fork looks big even though the work isn’t yours.',
+  commits: 'Area exactly proportional to total commits — the unflattering truth. Big repos dominate; small ones may not get a pixel.',
+  'sqrt-issues': 'Tile area ∝ √(open GitHub issues). If issues are where your ideas land, this is the idea map.',
+  issues: 'Area exactly proportional to open issues.',
+  'sqrt-files': 'Tile area ∝ √(files under git). How much thing is there, regardless of who built it.',
+  equal: 'Every project gets the same tile. Pure census — size carries no meaning.',
+};
+
+const COLOR_DEFS = {
+  recency: 'How recently the last commit or push happened. Higher on the ramp = fresher.',
+  'prov-recency': 'Hue = whose project it is; lightness = how recently you touched it.',
+  issues: 'Open GitHub issue count, binned none → 100+.',
+  status: 'Your own triage call. Untriaged repos stay grey.',
+  provenance: 'Mine vs fork vs clone of someone else’s — detected, with your overrides.',
+  priority: 'Your own high / medium / low marks. Unset stays grey.',
+};
+
+function syncMetricTooltips() {
+  $('#f-size').title = SIZE_DEFS[state.filters.size] || '';
+  $('#f-color').title = COLOR_DEFS[state.filters.color] || '';
+  for (const o of $('#f-size').options) o.title = SIZE_DEFS[o.value] || '';
+  for (const o of $('#f-color').options) o.title = COLOR_DEFS[o.value] || '';
+}
+
 const COMMON_TAGS = [
   'superseded', 'experiment', 'client work', 'archived upstream', 'reference only',
   'needs cleanup', 'no longer runs', 'merged elsewhere', 'personal',
@@ -173,6 +202,14 @@ function rampSteps(hue, toHue) {
 /** The ramp currently selected in the toolbar, both hues honoured. */
 function activeRamp() {
   return rampSteps(state.filters.hue, state.filters.hueTo);
+}
+
+/** Status and priority are ordinal: ONE hue stepped by intensity. Spreading
+ * them across a two-colour ramp put "someday" on a mud hue between red and
+ * aqua, which read as a different category rather than a middle rank. They
+ * take the palette's high-end hue so the palette picker still applies. */
+function ordinalRamp() {
+  return rampSteps(state.filters.hueTo, state.filters.hueTo);
 }
 
 /* ---------------------------------------------------------- text fitting *
@@ -273,6 +310,11 @@ function fromRamp(step, hueFrom, hueTo) {
   return { bg, ink: inkOn(bg) };
 }
 
+function fromOrdinal(step) {
+  const bg = ordinalRamp()[Math.max(0, Math.min(6, step))];
+  return { bg, ink: inkOn(bg) };
+}
+
 const NEUTRAL = () => ({ bg: cssVar('--neutral'), ink: cssVar('--neutral-ink') });
 
 function daysSince(iso) {
@@ -329,18 +371,31 @@ function effortOf(r) {
   return verdict(r.key).disown ? 0 : (r.effort || 0);
 }
 
+/**
+ * Work = commits + code volume, so neither style of working disappears:
+ * seven one-line commits and one 3,000-line commit are both real sessions.
+ * 100 changed lines count as one commit-equivalent. Where churn is
+ * unmeasurable (never cloned), commits alone carry it.
+ */
+function workOf(r) {
+  if (verdict(r.key).disown) return 0;
+  const churnPart = r.myChurn === null || r.myChurn === undefined ? 0 : r.myChurn / 100;
+  return (r.effort || 0) + churnPart;
+}
+
 /* ------------------------------------------------------------ scoring */
 
 function sizeValue(r) {
   switch (state.filters.size) {
+    case 'sqrt-effort': return Math.sqrt(Math.max(effortOf(r), 1));
     case 'commits': return Math.max(r.commits || 0, 1);
     case 'sqrt-commits': return Math.sqrt(Math.max(r.commits || 0, 1));
     case 'issues': return Math.max(r.openIssues || 0, 1);
     case 'sqrt-issues': return Math.sqrt(Math.max(r.openIssues || 0, 1));
     case 'sqrt-files': return Math.sqrt(Math.max(r.trackedFiles || 0, 1));
     case 'equal': return 1;
-    case 'sqrt-effort':
-    default: return Math.sqrt(Math.max(effortOf(r), 1));
+    case 'sqrt-work':
+    default: return Math.sqrt(Math.max(workOf(r), 1));
   }
 }
 
@@ -392,7 +447,7 @@ function colorFor(r) {
   switch (state.filters.color) {
     case 'status': {
       const s = STATUSES.find((x) => x.id === v.status);
-      return s ? fromRamp(s.step) : NEUTRAL();
+      return s ? fromOrdinal(s.step) : NEUTRAL();
     }
     case 'provenance': {
       const p = provRec(r);
@@ -411,7 +466,7 @@ function colorFor(r) {
     }
     case 'priority': {
       const step = { 3: 6, 2: 4, 1: 2 }[v.priority];
-      return step === undefined ? NEUTRAL() : fromRamp(step);
+      return step === undefined ? NEUTRAL() : fromOrdinal(step);
     }
     case 'recency':
     default: {
@@ -429,7 +484,17 @@ function groupOf(r) {
     }
     case 'status': {
       const s = STATUSES.find((x) => x.id === verdict(r.key).status);
-      return s ? s.label : 'Unsorted';
+      if (s) return `${s.glyph} ${s.label}`;
+      // Status is YOUR call, so most repos start untriaged — one giant
+      // "Unsorted" blob says nothing. Split the untriaged by recency so the
+      // grouping becomes a work queue: cold ones are quick kills (dead /
+      // someday), recently-touched ones probably deserve "active".
+      if (r.isArchived) return 'Untriaged · archived on GitHub';
+      const d = daysSince(r.lastActivity);
+      if (d === null) return 'Untriaged · no activity data';
+      if (d <= 90) return 'Untriaged · touched in last 3 months';
+      if (d <= 365) return 'Untriaged · quiet this year';
+      return 'Untriaged · cold for a year +';
     }
     case 'presence': return PRESENCE_LABEL[r.presence] || r.presence;
     case 'language': return r.language || 'No language detected';
@@ -860,9 +925,10 @@ function buildTile(r, rect) {
   // The subtitle tracks whatever the map is currently sized or coloured by,
   // so the number on the tile is the number you are looking at.
   const byIssues = /issues/.test(state.filters.size) || state.filters.color === 'issues';
+  const byMine = state.filters.size === 'sqrt-work' || state.filters.size === 'sqrt-effort';
   const lead = byIssues
     ? `${num(r.openIssues)} iss`
-    : `${num(state.filters.size === 'sqrt-effort' ? effortOf(r) : r.commits)}`;
+    : `${num(byMine ? effortOf(r) : r.commits)}`;
   const subText = `${lead} · ${fmtAgo(r.lastActivity)}`;
 
   /* Fit the real name to the real box. Padding shrinks first, because on a
@@ -958,7 +1024,7 @@ function renderLegend() {
     );
   } else if (mode === 'status') {
     parts.push('<span class="legend-label">Status</span>' + STATUSES.map((s) =>
-      `<span class="legend-item"><span class="legend-swatch" style="background:${activeRamp()[s.step]}"></span>${s.glyph} ${s.label}</span>`
+      `<span class="legend-item"><span class="legend-swatch" style="background:${ordinalRamp()[s.step]}"></span>${s.glyph} ${s.label}</span>`
     ).join('') + unsorted('Unsorted'));
   } else if (mode === 'provenance') {
     parts.push('<span class="legend-label">Provenance</span>' + PROVENANCE.map((p) =>
@@ -967,12 +1033,13 @@ function renderLegend() {
   } else if (mode === 'priority') {
     parts.push('<span class="legend-label">Priority</span>' +
       [[6, 'High'], [4, 'Medium'], [2, 'Low']].map(([step, label]) =>
-        `<span class="legend-item"><span class="legend-swatch" style="background:${activeRamp()[step]}"></span>${label}</span>`
+        `<span class="legend-item"><span class="legend-swatch" style="background:${ordinalRamp()[step]}"></span>${label}</span>`
       ).join('') + unsorted('Unset'));
   }
 
   const sizeLabel = {
-    'sqrt-effort': 'Area = √ commits by you (compressed; forks and clones shrink away)',
+    'sqrt-work': 'Area = √ work by you (commits + changed lines ÷ 100; forks and clones shrink away)',
+    'sqrt-effort': 'Area = √ commits by you (commit count only; dense commits under-count)',
     'sqrt-commits': 'Area = √ all commits across every branch, including other people’s',
     commits: 'Area = all commits, linear (true proportion)',
     'sqrt-issues': 'Area = √ open issues',
@@ -1102,7 +1169,7 @@ function openPanel(key) {
       <h3>Status</h3>
       <div class="seg" id="seg-status">
         ${STATUSES.map((s) => `<button type="button" data-status="${s.id}" aria-pressed="${v.status === s.id}">
-          <span class="dot" style="background:${activeRamp()[s.step]}"></span>${s.glyph} ${s.label}</button>`).join('')}
+          <span class="dot" style="background:${ordinalRamp()[s.step]}"></span>${s.glyph} ${s.label}</button>`).join('')}
         <button type="button" data-status="" aria-pressed="${!v.status}">Unsorted</button>
       </div>
     </div>
@@ -1177,6 +1244,7 @@ function openPanel(key) {
         <dt>First commit</dt><dd>${escapeHTML(fmtDate(r.firstCommitDate))}</dd>
         <dt>Last commit</dt><dd>${escapeHTML(fmtDate(r.lastCommitDate))}</dd>
         <dt>Commits 90d</dt><dd>${num(r.commits90d)}</dd>
+        <dt>Lines changed</dt><dd>${num(r.churn)}${r.myChurn ? ` <span class="muted">(${num(r.myChurn)} yours)</span>` : ''}</dd>
         <dt>Tracked files</dt><dd>${num(r.trackedFiles)}</dd>
         <dt>Uncommitted</dt><dd>${num(r.dirtyFiles)}</dd>
         <dt>Unpushed</dt><dd>${num(r.unpushedCommits)}</dd>
@@ -1467,9 +1535,11 @@ function wireGlobal() {
     state.filters.color = e.target.value;
     localStorage.setItem('atlas-color', e.target.value);
     syncHueControl();
+    syncMetricTooltips();
     pushPrefs();
     render();
   });
+  $('#f-size').addEventListener('input', syncMetricTooltips);
   $('#f-hue').addEventListener('input', (e) => setPalette(e.target.value, state.filters.hueTo));
   $('#f-hue-to').addEventListener('input', (e) => setPalette(state.filters.hue, e.target.value));
   $('#f-preset').addEventListener('input', (e) => {
@@ -1813,6 +1883,7 @@ async function boot() {
 
   wireGlobal();
   connectEvents();
+  syncMetricTooltips();
   render();
 }
 
