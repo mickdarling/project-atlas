@@ -7,12 +7,12 @@
 
   <key>ProgramArguments</key>
   <array>
-    <string>/opt/homebrew/bin/node</string>
-    <string>/Users/mick/Developer/project-atlas/server.js</string>
+    <string>__NODE__</string>
+    <string>__DIR__/server.js</string>
   </array>
 
   <key>WorkingDirectory</key>
-  <string>/Users/mick/Developer/project-atlas</string>
+  <string>__DIR__</string>
 
   <key>RunAtLoad</key>
   <true/>
@@ -21,8 +21,8 @@
   <true/>
 
   <key>StandardOutPath</key>
-  <string>/Users/mick/Library/Logs/project-atlas/server.log</string>
+  <string>__HOME__/Library/Logs/project-atlas/server.log</string>
   <key>StandardErrorPath</key>
-  <string>/Users/mick/Library/Logs/project-atlas/server.log</string>
+  <string>__HOME__/Library/Logs/project-atlas/server.log</string>
 </dict>
 </plist>

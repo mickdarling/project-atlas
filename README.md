@@ -70,8 +70,13 @@ local means nothing ever leaves the machine.
 | `data/verdicts.json` | Your judgments — status, priority, hidden, tags, notes | The web page, only |
 
 `scan.js` never touches `verdicts.json`. Re-run the scan as often as you like; your
-judgments are never clobbered. `inventory.json` is gitignored because it regenerates;
-`verdicts.json` is committed because it can't.
+judgments are never clobbered.
+
+**Everything under `data/` stays on your machine.** The generator is public; what it
+generates — the inventory of your repos, your judgments, your identity aliases — is
+about *your* portfolio and is gitignored, never pushed. `verdicts.json` is the one
+file that can't be regenerated, so back it up somewhere private (the **Export**
+button downloads it; a private gist or your own backups both work).
 
 ## What it scans
 
@@ -294,9 +299,10 @@ one shows its rot.
 scan seeds it from `git config` and the GitHub API, and appends
 `_unmatchedAuthorsSeen` — the top authors in repos you own who weren't recognized.
 
-Check that list. One machine-local git email (`mick@themachine.local`) was worth 1,759
-commits and made "% yours" lie on the biggest repos. Add any that are also you and
-re-run the scan.
+Check that list. In the first real portfolio this ran against, one machine-local git
+email (`user@machine.local` style) was worth 1,759 commits and made "% yours" lie on
+the biggest repos. Add any aliases that are also you and re-run the scan. This file
+is gitignored — it holds your emails and other people's, and stays local.
 
 ## Accessibility
 
@@ -322,7 +328,7 @@ public/style.css   palette roles, both themes
 public/app.js      squarified treemap, encodings, triage panel, table view
 public/ramps.js    GENERATED — 8 validated sequential ramps, light and dark
 data/identity.json which commits count as yours (yours to edit)
-data/verdicts.json your judgments (committed)
+data/verdicts.json your judgments (LOCAL ONLY, gitignored — export to back up)
 data/inventory.json harvested facts (gitignored, regenerate any time)
 ```
 

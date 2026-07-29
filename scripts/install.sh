@@ -34,10 +34,18 @@ cp -R "$DIR/app/AtlasMenu.app" "$HOME/Applications/AtlasMenu.app"
 chmod +x "$HOME/Applications/Atlas.app/Contents/MacOS/Atlas" \
          "$HOME/Applications/AtlasMenu.app/Contents/MacOS/AtlasMenu"
 
+# The repo's plists are TEMPLATES — no user paths are committed. They're
+# instantiated here for whoever runs the installer.
+NODE_BIN="$(command -v node)"
+[ -n "$NODE_BIN" ] || { echo "✗ node not found on PATH"; exit 1; }
+NODE_DIR="$(dirname "$NODE_BIN")"
+
 for name in com.mickdarling.project-atlas com.mickdarling.project-atlas-scan com.mickdarling.project-atlas-menu; do
   # bootout is idempotent-ish; ignore "not loaded"
   launchctl bootout "gui/$UID_N/$name" 2>/dev/null || true
-  cp "$DIR/launchagents/$name.plist" "$AGENTS/"
+  sed -e "s|__HOME__|$HOME|g" -e "s|__DIR__|$DIR|g" \
+      -e "s|__NODE__|$NODE_BIN|g" -e "s|__NODEDIR__|$NODE_DIR|g" \
+      "$DIR/launchagents/$name.plist" > "$AGENTS/$name.plist"
   # bootstrap right after bootout can hit the old job still tearing down
   # (EIO). Give launchd a beat and retry.
   ok=""

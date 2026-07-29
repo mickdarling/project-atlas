@@ -2,9 +2,11 @@
 data/inventory.json
 data/*.tmp
 
-# data/verdicts.json is deliberately NOT ignored.
-# It holds your judgments and is the one file here that cannot be regenerated.
-
 .DS_Store
 node_modules/
 data/prefs.json
+
+# Artifacts stay LOCAL. The generator is public; what it generates about
+# YOUR portfolio never leaves your machine.
+data/verdicts.json
+data/identity.json

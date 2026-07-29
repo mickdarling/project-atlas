@@ -9,20 +9,20 @@
        verdicts.json — the scan writes facts only. -->
   <key>ProgramArguments</key>
   <array>
-    <string>/opt/homebrew/bin/node</string>
-    <string>/Users/mick/Developer/project-atlas/scan.js</string>
+    <string>__NODE__</string>
+    <string>__DIR__/scan.js</string>
   </array>
 
   <key>WorkingDirectory</key>
-  <string>/Users/mick/Developer/project-atlas</string>
+  <string>__DIR__</string>
 
   <!-- gh needs to be findable for the GitHub half of the harvest. -->
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key>
-    <string>/opt/homebrew/bin:/usr/bin:/bin</string>
+    <string>__NODEDIR__:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
     <key>HOME</key>
-    <string>/Users/mick</string>
+    <string>__HOME__</string>
   </dict>
 
   <key>StartCalendarInterval</key>
@@ -34,8 +34,8 @@
   </dict>
 
   <key>StandardOutPath</key>
-  <string>/Users/mick/Library/Logs/project-atlas/scan.log</string>
+  <string>__HOME__/Library/Logs/project-atlas/scan.log</string>
   <key>StandardErrorPath</key>
-  <string>/Users/mick/Library/Logs/project-atlas/scan.log</string>
+  <string>__HOME__/Library/Logs/project-atlas/scan.log</string>
 </dict>
 </plist>

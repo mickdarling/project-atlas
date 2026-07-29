@@ -7,7 +7,7 @@
 
   <key>ProgramArguments</key>
   <array>
-    <string>/Users/mick/Applications/AtlasMenu.app/Contents/MacOS/AtlasMenu</string>
+    <string>__HOME__/Applications/AtlasMenu.app/Contents/MacOS/AtlasMenu</string>
   </array>
 
   <key>RunAtLoad</key>
@@ -19,8 +19,8 @@
   <false/>
 
   <key>StandardOutPath</key>
-  <string>/Users/mick/Library/Logs/project-atlas/menu.log</string>
+  <string>__HOME__/Library/Logs/project-atlas/menu.log</string>
   <key>StandardErrorPath</key>
-  <string>/Users/mick/Library/Logs/project-atlas/menu.log</string>
+  <string>__HOME__/Library/Logs/project-atlas/menu.log</string>
 </dict>
 </plist>
