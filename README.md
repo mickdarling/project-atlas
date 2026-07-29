@@ -93,13 +93,18 @@ Run `npm run scan -- --no-github` to skip the API entirely and work offline.
 
 ## Reading the map
 
-**Area** defaults to `√ commits by you`. Straight commit count is a bad measure of
-your investment — a fork of Zulip is 67,855 commits of somebody else's work. So the
-harvester computes an `effort` field: your own commits where a clone exists to
-attribute against, and for never-cloned repos, the full count if you own it and zero
-if it's a fork. The square root keeps small projects visible; the legend always
-states which scale is active. Switch to `√ all commits` or linear `all commits` when
-you want the unflattering truth.
+**Area** defaults to `√ work by you` — commits **plus changed lines ÷ 100**, both
+attributed to you personally. Commit count alone lies twice: a fork of Zulip is
+67,855 commits of somebody else's work, and a dense project can be nine commits and
+six thousand hand-written lines. Counting both, seven tiny edits and one 3,000-line
+commit are both real sessions.
+
+Three guardrails keep *data* from impersonating *work*: any single file changed by
+more than 5,000 lines in one commit is skipped (generated output — nobody types
+that), lockfiles are skipped, and churn credit caps at 2,000 lines per commit, so a
+one-commit archive import scores as an event, not a body of work. The alternatives
+(`√ commits by you`, `√ all commits`, linear, issues, files, equal) are all still
+there, and every option carries a hover definition saying exactly what it measures.
 
 **Color** has six modes. Recency is the default — a single-hue ramp, pale for "two
 years ago" through dark for "this week".
@@ -194,8 +199,32 @@ names the real dates at the ends, so a colour still means something you can act 
 "nothing there", so the legend reports the count and lists them on hover.
 
 **Borders carry provenance and location** so the color channel stays free:
-dashed = local only, dotted = not cloned. Corner glyphs: `✱` uncommitted changes,
-`↑` unpushed commits, `▤` archived, plus the status glyph and `!` priority marks.
+dashed = local only, dotted = not cloned.
+
+### Corner glyphs
+
+Hover any tile's glyph cluster (or the legend's glyph note) and each one is
+explained in place. The full table:
+
+| glyph | means |
+|---|---|
+| `✱` | uncommitted changes sitting on disk |
+| `↑` | commits not pushed to any remote |
+| `▤` | archived on GitHub |
+| `⧉` | second working copy — another clone carries this repo's stats |
+| `✎` | provenance set by hand |
+| `▁ ▄ █` | priority low / medium / high |
+| `◌` / `⊘` | hidden / ignored |
+| `● ▣ ◔ ✓ ✕` | status: active / in use / someday / done / dead |
+
+### Group by status is a triage queue
+
+Status is your call, so most repos start untriaged — and one giant "Unsorted" blob
+says nothing. Grouping by status splits the untriaged by recency instead:
+*touched in last 3 months* / *quiet this year* / *cold for a year+* / *archived on
+GitHub*. Cold ones are quick kills (`x` dead, `s` someday); recently-touched ones
+probably deserve `a`. Status and priority colours step a **single** hue (the
+palette's high end) so the ladder reads as a ladder, not five categories.
 
 **Provenance** is detected, not guessed: GitHub's fork flag, the remote's owner
 against your org list, and per-author commit attribution.
