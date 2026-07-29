@@ -1,8 +1,8 @@
 // Project Atlas menu bar app.
 //
-// A native NSStatusItem: shows server state, opens the dashboard, triggers
-// rescans, mirrors the view configuration (so the page can run map-only),
-// and can stop/start the server's LaunchAgent.
+// A status item that opens a CONTROL PANEL, not a throwaway menu: change as
+// many settings as you like — it stays open. It closes when the mouse leaves
+// it (short grace period), or on Esc / click-away.
 //
 // Build: swiftc -O AtlasMenu.swift -o AtlasMenu   (done by scripts/install.sh)
 
@@ -12,32 +12,22 @@ import Foundation
 let BASE = "http://127.0.0.1:4317"
 let SERVER_AGENT = "com.mickdarling.project-atlas"
 
-// MARK: - Tiny synchronous HTTP (menus build in the blink before display;
-// 400 ms is plenty for localhost and short enough to never feel stuck).
+// MARK: - HTTP helpers
 
 func httpJSON(_ path: String, method: String = "GET", body: [String: Any]? = nil,
-              timeout: TimeInterval = 0.4) -> [String: Any]? {
-    guard let url = URL(string: BASE + path) else { return nil }
+              timeout: TimeInterval = 0.6,
+              done: (([String: Any]?) -> Void)? = nil) {
+    guard let url = URL(string: BASE + path) else { done?(nil); return }
     var req = URLRequest(url: url, timeoutInterval: timeout)
     req.httpMethod = method
     if let body = body {
         req.httpBody = try? JSONSerialization.data(withJSONObject: body)
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
     }
-    let sem = DispatchSemaphore(value: 0)
-    var result: [String: Any]?
     URLSession.shared.dataTask(with: req) { data, _, _ in
-        if let d = data {
-            result = (try? JSONSerialization.jsonObject(with: d)) as? [String: Any]
-        }
-        sem.signal()
+        let obj = data.flatMap { (try? JSONSerialization.jsonObject(with: $0)) as? [String: Any] }
+        DispatchQueue.main.async { done?(obj) }
     }.resume()
-    _ = sem.wait(timeout: .now() + timeout + 0.1)
-    return result
-}
-
-func setPref(_ key: String, _ value: String) {
-    _ = httpJSON("/api/prefs", method: "POST", body: [key: value])
 }
 
 func launchctl(_ args: [String]) {
@@ -52,62 +42,250 @@ func launchctl(_ args: [String]) {
 
 struct Opt { let value: String; let label: String }
 
-let GROUPS = [
-    Opt(value: "owner", label: "Organization"),
-    Opt(value: "provenance", label: "Provenance"),
-    Opt(value: "status", label: "Status"),
-    Opt(value: "presence", label: "Local vs Remote"),
-    Opt(value: "language", label: "Language"),
-    Opt(value: "visibility", label: "Hidden / Ignored"),
-    Opt(value: "none", label: "Nothing (One Big Map)"),
-]
-let COLORS = [
-    Opt(value: "recency", label: "Recency of Work"),
-    Opt(value: "prov-recency", label: "Mine vs Outside × Recency"),
-    Opt(value: "issues", label: "Open Issues"),
-    Opt(value: "status", label: "Status"),
-    Opt(value: "provenance", label: "Provenance"),
-    Opt(value: "priority", label: "Priority"),
-]
-let SIZES = [
-    Opt(value: "sqrt-effort", label: "√ Commits by Me"),
-    Opt(value: "sqrt-commits", label: "√ All Commits"),
-    Opt(value: "commits", label: "All Commits (Linear)"),
-    Opt(value: "sqrt-issues", label: "√ Open Issues"),
-    Opt(value: "issues", label: "Open Issues (Linear)"),
-    Opt(value: "sqrt-files", label: "√ Tracked Files"),
-    Opt(value: "equal", label: "Equal"),
-]
-let PALETTES = [
-    Opt(value: "red:aqua", label: "Red → Aqua"),
-    Opt(value: "red:green", label: "Red → Green"),
-    Opt(value: "red:blue", label: "Red → Blue"),
-    Opt(value: "yellow:violet", label: "Amber → Violet"),
-    Opt(value: "orange:blue", label: "Orange → Blue"),
-    Opt(value: "blue:blue", label: "Blue (Single Hue)"),
-    Opt(value: "grey:grey", label: "Grey (Single Hue)"),
-]
-let SCALES = [
-    Opt(value: "auto", label: "Auto — Spread This Set"),
-    Opt(value: "fixed", label: "Fixed — Absolute Age"),
-]
-let SHOWING = [
-    Opt(value: "visible", label: "Visible Only"),
-    Opt(value: "all", label: "Everything"),
-    Opt(value: "parked", label: "Only Hidden + Ignored"),
-    Opt(value: "hidden", label: "Only Hidden"),
-    Opt(value: "ignored", label: "Only Ignored"),
-]
-let THEMES = [
-    Opt(value: "dark", label: "Dark"),
-    Opt(value: "light", label: "Light"),
+let SECTIONS: [(key: String, title: String, opts: [Opt])] = [
+    ("group", "Group by", [
+        Opt(value: "owner", label: "Organization"),
+        Opt(value: "provenance", label: "Provenance"),
+        Opt(value: "status", label: "Status"),
+        Opt(value: "presence", label: "Local vs remote"),
+        Opt(value: "language", label: "Language"),
+        Opt(value: "visibility", label: "Hidden / ignored"),
+        Opt(value: "none", label: "Nothing (one big map)"),
+    ]),
+    ("color", "Color by", [
+        Opt(value: "recency", label: "Recency of work"),
+        Opt(value: "prov-recency", label: "Mine vs outside × recency"),
+        Opt(value: "issues", label: "Open issues"),
+        Opt(value: "status", label: "Status"),
+        Opt(value: "provenance", label: "Provenance"),
+        Opt(value: "priority", label: "Priority"),
+    ]),
+    ("size", "Area", [
+        Opt(value: "sqrt-effort", label: "√ commits by me"),
+        Opt(value: "sqrt-commits", label: "√ all commits"),
+        Opt(value: "commits", label: "All commits (linear)"),
+        Opt(value: "sqrt-issues", label: "√ open issues"),
+        Opt(value: "issues", label: "Open issues (linear)"),
+        Opt(value: "sqrt-files", label: "√ tracked files"),
+        Opt(value: "equal", label: "Equal"),
+    ]),
+    ("__palette", "Palette", [
+        Opt(value: "red:aqua", label: "Red → Aqua"),
+        Opt(value: "red:green", label: "Red → Green"),
+        Opt(value: "red:blue", label: "Red → Blue"),
+        Opt(value: "yellow:violet", label: "Amber → Violet"),
+        Opt(value: "orange:blue", label: "Orange → Blue"),
+        Opt(value: "blue:blue", label: "Blue (single hue)"),
+        Opt(value: "grey:grey", label: "Grey (single hue)"),
+    ]),
+    ("scale", "Scale", [
+        Opt(value: "auto", label: "Auto — spread this set"),
+        Opt(value: "fixed", label: "Fixed — absolute age"),
+    ]),
+    ("visibility", "Showing", [
+        Opt(value: "visible", label: "Visible only"),
+        Opt(value: "all", label: "Everything"),
+        Opt(value: "parked", label: "Only hidden + ignored"),
+        Opt(value: "hidden", label: "Only hidden"),
+        Opt(value: "ignored", label: "Only ignored"),
+    ]),
+    ("theme", "Theme", [
+        Opt(value: "dark", label: "Dark"),
+        Opt(value: "light", label: "Light"),
+    ]),
 ]
 
-// MARK: - App
+// MARK: - The panel
 
-class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
+final class PanelController: NSViewController, NSMenuDelegate {
+    weak var owner: AppDelegate?
+
+    let statusLabel = NSTextField(labelWithString: "…")
+    var popups: [String: NSPopUpButton] = [:]
+    let mapOnly = NSButton(checkboxWithTitle: "Map only (hide page controls)", target: nil, action: nil)
+    let openBtn = NSButton(title: "Open Dashboard", target: nil, action: nil)
+    let rescanBtn = NSButton(title: "Rescan Now", target: nil, action: nil)
+    let serverBtn = NSButton(title: "Stop Server", target: nil, action: nil)
+    let quitBtn = NSButton(title: "Quit", target: nil, action: nil)
+    var serverUp = false
+
+    override func loadView() {
+        let grid = NSGridView(numberOfColumns: 2, rows: 0)
+        grid.columnSpacing = 10
+        grid.rowSpacing = 7
+        grid.column(at: 0).xPlacement = .trailing
+
+        statusLabel.font = .systemFont(ofSize: 11)
+        statusLabel.textColor = .secondaryLabelColor
+        statusLabel.lineBreakMode = .byTruncatingTail
+
+        openBtn.target = self; openBtn.action = #selector(openDashboard)
+        rescanBtn.target = self; rescanBtn.action = #selector(rescan)
+        serverBtn.target = self; serverBtn.action = #selector(toggleServer)
+        quitBtn.target = self; quitBtn.action = #selector(quitApp)
+        mapOnly.target = self; mapOnly.action = #selector(mapOnlyChanged)
+        for b in [openBtn, rescanBtn, serverBtn, quitBtn] {
+            b.bezelStyle = .rounded
+            b.controlSize = .small
+            b.font = .systemFont(ofSize: 11)
+        }
+        mapOnly.font = .systemFont(ofSize: 12)
+
+        let actions = NSStackView(views: [openBtn, rescanBtn])
+        actions.spacing = 6
+
+        grid.addRow(with: [NSGridCell.emptyContentView, statusLabel])
+        grid.addRow(with: [NSGridCell.emptyContentView, actions])
+        addSeparator(grid)
+
+        for section in SECTIONS {
+            let label = NSTextField(labelWithString: section.title)
+            label.font = .systemFont(ofSize: 12)
+            label.textColor = .labelColor
+
+            let popup = NSPopUpButton(frame: .zero, pullsDown: false)
+            popup.controlSize = .small
+            popup.font = .systemFont(ofSize: 12)
+            for o in section.opts { popup.addItem(withTitle: o.label) }
+            popup.target = self
+            popup.action = #selector(popupChanged(_:))
+            popup.identifier = NSUserInterfaceItemIdentifier(section.key)
+            // While a popup's own menu is open the cursor is outside the panel;
+            // that must not count as "moved away".
+            popup.menu?.delegate = self
+            popups[section.key] = popup
+            grid.addRow(with: [label, popup])
+        }
+
+        addSeparator(grid)
+        grid.addRow(with: [NSGridCell.emptyContentView, mapOnly])
+        let lifecycle = NSStackView(views: [serverBtn, quitBtn])
+        lifecycle.spacing = 6
+        grid.addRow(with: [NSGridCell.emptyContentView, lifecycle])
+
+        let wrap = NSView()
+        wrap.addSubview(grid)
+        grid.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            grid.topAnchor.constraint(equalTo: wrap.topAnchor, constant: 12),
+            grid.bottomAnchor.constraint(equalTo: wrap.bottomAnchor, constant: -12),
+            grid.leadingAnchor.constraint(equalTo: wrap.leadingAnchor, constant: 14),
+            grid.trailingAnchor.constraint(equalTo: wrap.trailingAnchor, constant: -14),
+            wrap.widthAnchor.constraint(greaterThanOrEqualToConstant: 340),
+        ])
+        view = wrap
+    }
+
+    func addSeparator(_ grid: NSGridView) {
+        let sep = NSBox()
+        sep.boxType = .separator
+        grid.addRow(with: [sep])
+        grid.row(at: grid.numberOfRows - 1).mergeCells(in: NSRange(location: 0, length: 2))
+    }
+
+    // Pull truth from the server and reflect it. Called on open + every 2 s.
+    func refresh() {
+        httpJSON("/api/status") { [weak self] status in
+            guard let self = self else { return }
+            self.serverUp = status?["up"] as? Bool ?? false
+            let prefs = status?["prefs"] as? [String: Any] ?? [:]
+            let scanning = status?["scanning"] as? Bool ?? false
+
+            if self.serverUp, let counts = status?["counts"] as? [String: Any] {
+                let total = counts["total"] as? Int ?? 0
+                let issues = counts["openIssues"] as? Int ?? 0
+                self.statusLabel.stringValue = scanning
+                    ? "Rescanning…"
+                    : "\(total) projects · \(issues) open issues"
+            } else {
+                self.statusLabel.stringValue = self.serverUp ? "Server up — no inventory yet" : "Server not running"
+            }
+
+            self.rescanBtn.isEnabled = self.serverUp && !scanning
+            self.rescanBtn.title = scanning ? "Scanning…" : "Rescan Now"
+            self.openBtn.isEnabled = self.serverUp
+            self.mapOnly.isEnabled = self.serverUp
+            self.serverBtn.title = self.serverUp ? "Stop Server" : "Start Server"
+
+            for (key, popup) in self.popups {
+                popup.isEnabled = self.serverUp
+                let current = key == "__palette"
+                    ? "\(prefs["hue"] as? String ?? "red"):\(prefs["hueTo"] as? String ?? "aqua")"
+                    : (prefs[key] as? String ?? "")
+                let opts = SECTIONS.first { $0.key == key }?.opts ?? []
+                if let idx = opts.firstIndex(where: { $0.value == current }) {
+                    popup.selectItem(at: idx)
+                } else if !current.isEmpty {
+                    popup.selectItem(at: -1)
+                }
+            }
+            self.mapOnly.state = (prefs["chrome"] as? String == "map") ? .on : .off
+        }
+    }
+
+    // MARK: actions — none of these close the panel except Open/Quit
+
+    @objc func popupChanged(_ sender: NSPopUpButton) {
+        guard let key = sender.identifier?.rawValue,
+              let opts = SECTIONS.first(where: { $0.key == key })?.opts,
+              sender.indexOfSelectedItem >= 0,
+              sender.indexOfSelectedItem < opts.count else { return }
+        let value = opts[sender.indexOfSelectedItem].value
+        if key == "__palette" {
+            let parts = value.split(separator: ":").map(String.init)
+            if parts.count == 2 {
+                httpJSON("/api/prefs", method: "POST", body: ["hue": parts[0], "hueTo": parts[1]])
+            }
+        } else {
+            httpJSON("/api/prefs", method: "POST", body: [key: value])
+        }
+    }
+
+    @objc func mapOnlyChanged() {
+        httpJSON("/api/prefs", method: "POST",
+                 body: ["chrome": mapOnly.state == .on ? "map" : "full"])
+    }
+
+    @objc func openDashboard() {
+        NSWorkspace.shared.open(URL(string: BASE)!)
+        owner?.closePanel()
+    }
+
+    @objc func rescan() {
+        rescanBtn.isEnabled = false
+        rescanBtn.title = "Scanning…"
+        httpJSON("/api/scan", method: "POST", body: [:], timeout: 2.0)
+    }
+
+    @objc func toggleServer() {
+        if serverUp {
+            // KeepAlive would resurrect a killed process; bootout is the real stop.
+            launchctl(["bootout", "gui/\(getuid())/\(SERVER_AGENT)"])
+        } else {
+            let plist = NSString(string: "~/Library/LaunchAgents/\(SERVER_AGENT).plist").expandingTildeInPath
+            launchctl(["bootstrap", "gui/\(getuid())", plist])
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { self.refresh() }
+    }
+
+    @objc func quitApp() { NSApp.terminate(nil) }
+
+    // MARK: popup-menu guard — an open dropdown pauses the mouse-away close
+
+    func menuWillOpen(_ menu: NSMenu) { owner?.suspendAutoClose() }
+    func menuDidClose(_ menu: NSMenu) { owner?.resumeAutoClose() }
+}
+
+// MARK: - App: status item + popover + mouse-away tracking
+
+class AppDelegate: NSResponder, NSApplicationDelegate, NSPopoverDelegate {
     var item: NSStatusItem!
-    let menu = NSMenu()
+    let popover = NSPopover()
+    let panel = PanelController()
+    var exitTimer: Timer?
+    var refreshTimer: Timer?
+    var suspendCount = 0
+    var tracking: NSTrackingArea?
 
     func applicationDidFinishLaunching(_ n: Notification) {
         item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
@@ -118,127 +296,65 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         } else {
             item.button?.title = "⊞"
         }
-        menu.delegate = self
-        item.menu = menu
+        item.button?.target = self
+        item.button?.action = #selector(togglePanel)
+
+        panel.owner = self
+        popover.contentViewController = panel
+        popover.behavior = .transient // click-away / Esc still close it
+        popover.delegate = self
     }
 
-    // Rebuilt every time it opens, so checkmarks reflect reality, not memory.
-    func menuNeedsUpdate(_ menu: NSMenu) {
-        menu.removeAllItems()
-        let status = httpJSON("/api/status")
-        let up = status?["up"] as? Bool ?? false
-        let prefs = status?["prefs"] as? [String: Any] ?? [:]
-        let scanning = status?["scanning"] as? Bool ?? false
+    @objc func togglePanel() {
+        if popover.isShown { closePanel(); return }
+        guard let button = item.button else { return }
+        panel.refresh()
+        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        NSApp.activate(ignoringOtherApps: true)
 
-        // --- status line ---
-        let head = NSMenuItem()
-        if up, let counts = status?["counts"] as? [String: Any] {
-            let total = counts["total"] as? Int ?? 0
-            let issues = counts["openIssues"] as? Int ?? 0
-            head.title = "\(total) projects · \(issues) open issues"
-        } else if up {
-            head.title = "Server up — no inventory yet"
-        } else {
-            head.title = "Server not running"
-        }
-        head.isEnabled = false
-        menu.addItem(head)
-        menu.addItem(.separator())
+        if let old = tracking { panel.view.removeTrackingArea(old) }
+        let ta = NSTrackingArea(rect: .zero,
+                                options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+                                owner: self, userInfo: nil)
+        panel.view.addTrackingArea(ta)
+        tracking = ta
 
-        // --- actions ---
-        menu.addItem(makeItem("Open Dashboard", #selector(openDashboard), "o", enabled: up))
-        let scan = makeItem(scanning ? "Scanning…" : "Rescan Now",
-                            #selector(rescan), "r", enabled: up && !scanning)
-        menu.addItem(scan)
-        menu.addItem(.separator())
-
-        if up {
-            // --- view configuration ---
-            let mapOnly = makeItem("Map Only (Hide Controls)", #selector(toggleChrome), "m")
-            mapOnly.state = (prefs["chrome"] as? String == "map") ? .on : .off
-            menu.addItem(mapOnly)
-
-            addSubmenu("Group By", GROUPS, prefKey: "group", current: prefs["group"] as? String ?? "owner")
-            addSubmenu("Color By", COLORS, prefKey: "color", current: prefs["color"] as? String ?? "recency")
-            addSubmenu("Area", SIZES, prefKey: "size", current: prefs["size"] as? String ?? "sqrt-effort")
-            let curPalette = "\(prefs["hue"] as? String ?? "red"):\(prefs["hueTo"] as? String ?? "aqua")"
-            addSubmenu("Palette", PALETTES, prefKey: "__palette", current: curPalette)
-            addSubmenu("Scale", SCALES, prefKey: "scale", current: prefs["scale"] as? String ?? "auto")
-            addSubmenu("Showing", SHOWING, prefKey: "visibility", current: prefs["visibility"] as? String ?? "visible")
-            addSubmenu("Theme", THEMES, prefKey: "theme", current: prefs["theme"] as? String ?? "dark")
-            menu.addItem(.separator())
-        }
-
-        // --- lifecycle ---
-        if up {
-            menu.addItem(makeItem("Stop Server", #selector(stopServer), ""))
-        } else {
-            menu.addItem(makeItem("Start Server", #selector(startServer), ""))
-        }
-        menu.addItem(makeItem("Quit Atlas Menu", #selector(quitApp), "q"))
-    }
-
-    func makeItem(_ title: String, _ sel: Selector, _ key: String, enabled: Bool = true) -> NSMenuItem {
-        let it = NSMenuItem(title: title, action: enabled ? sel : nil, keyEquivalent: key)
-        it.target = self
-        return it
-    }
-
-    func addSubmenu(_ title: String, _ opts: [Opt], prefKey: String, current: String) {
-        let root = NSMenuItem(title: title, action: nil, keyEquivalent: "")
-        let sub = NSMenu(title: title)
-        for o in opts {
-            let it = NSMenuItem(title: o.label, action: #selector(pickOption(_:)), keyEquivalent: "")
-            it.target = self
-            it.representedObject = [prefKey, o.value]
-            it.state = (o.value == current) ? .on : .off
-            sub.addItem(it)
-        }
-        root.submenu = sub
-        menu.addItem(root)
-    }
-
-    // MARK: actions
-
-    @objc func openDashboard() {
-        NSWorkspace.shared.open(URL(string: BASE)!)
-    }
-
-    @objc func rescan() {
-        _ = httpJSON("/api/scan", method: "POST", body: [:], timeout: 1.0)
-    }
-
-    @objc func toggleChrome() {
-        let prefs = httpJSON("/api/prefs") ?? [:]
-        let now = prefs["chrome"] as? String ?? "full"
-        setPref("chrome", now == "map" ? "full" : "map")
-    }
-
-    @objc func pickOption(_ sender: NSMenuItem) {
-        guard let pair = sender.representedObject as? [String], pair.count == 2 else { return }
-        if pair[0] == "__palette" {
-            let parts = pair[1].split(separator: ":").map(String.init)
-            if parts.count == 2 {
-                _ = httpJSON("/api/prefs", method: "POST",
-                             body: ["hue": parts[0], "hueTo": parts[1]])
-            }
-        } else {
-            setPref(pair[0], pair[1])
+        refreshTimer?.invalidate()
+        refreshTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+            self?.panel.refresh()
         }
     }
 
-    @objc func stopServer() {
-        // KeepAlive would resurrect a killed process; bootout is the real stop.
-        launchctl(["bootout", "gui/\(getuid())/\(SERVER_AGENT)"])
+    func closePanel() { popover.performClose(nil) }
+
+    func popoverDidClose(_ notification: Notification) {
+        exitTimer?.invalidate()
+        refreshTimer?.invalidate()
+        suspendCount = 0
     }
 
-    @objc func startServer() {
-        let plist = NSString(string: "~/Library/LaunchAgents/\(SERVER_AGENT).plist").expandingTildeInPath
-        launchctl(["bootstrap", "gui/\(getuid())", plist])
+    // The panel only disappears once the mouse has actually left it — with a
+    // grace period, so grazing the edge doesn't dismiss your half-done config.
+    override func mouseExited(with event: NSEvent) {
+        guard popover.isShown else { return }
+        exitTimer?.invalidate()
+        exitTimer = Timer.scheduledTimer(withTimeInterval: 0.9, repeats: false) { [weak self] _ in
+            guard let self = self, self.popover.isShown, self.suspendCount == 0 else { return }
+            self.closePanel()
+        }
     }
 
-    @objc func quitApp() {
-        NSApp.terminate(nil)
+    override func mouseEntered(with event: NSEvent) {
+        exitTimer?.invalidate()
+    }
+
+    func suspendAutoClose() {
+        suspendCount += 1
+        exitTimer?.invalidate()
+    }
+
+    func resumeAutoClose() {
+        suspendCount = max(0, suspendCount - 1)
     }
 }
 
