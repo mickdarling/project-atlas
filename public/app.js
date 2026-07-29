@@ -170,6 +170,34 @@ function syncMetricTooltips() {
   for (const o of $('#f-color').options) o.title = COLOR_DEFS[o.value] || '';
 }
 
+/* Every glyph that can appear in a tile's corner, with what it means.
+ * Single source of truth: the tile title, the hover card, and the legend
+ * all read from here, so a glyph is never on screen unexplained. */
+const FLAG_DEFS = {
+  '✱': 'uncommitted changes sitting on disk',
+  '↑': 'commits not pushed to any remote',
+  '▤': 'archived on GitHub',
+  '⧉': 'second working copy — another clone of this repo carries its stats',
+  '✎': 'provenance set by hand (overrides detection)',
+  '▁': 'priority: low',
+  '▄': 'priority: medium',
+  '█': 'priority: high',
+  '◌': 'hidden — off my screen for now',
+  '⊘': 'ignored — not my project, not counted',
+  '●': 'status: active',
+  '▣': 'status: in use, not developed',
+  '◔': 'status: someday',
+  '✓': 'status: done',
+  '✕': 'status: dead',
+};
+
+function describeFlags(flagsStr) {
+  return flagsStr
+    .split(' ')
+    .filter(Boolean)
+    .map((g) => `${g} ${FLAG_DEFS[g] || ''}`.trim());
+}
+
 const COMMON_TAGS = [
   'superseded', 'experiment', 'client work', 'archived upstream', 'reference only',
   'needs cleanup', 'no longer runs', 'merged elsewhere', 'personal',
@@ -969,7 +997,7 @@ function buildTile(r, rect) {
   el.innerHTML = showText
     ? `<div class="tile-name" style="font-size:${nameFit.size}px;max-height:${nameMaxH.toFixed(1)}px">${escapeHTML(r.name)}</div>` +
       (showSub ? `<div class="tile-sub" style="font-size:${subFit.size}px">${escapeHTML(subText)}</div>` : '') +
-      (flags && showFlags ? `<div class="tile-flags" style="font-size:${Math.min(9, subFit.size)}px">${escapeHTML(flags)}</div>` : '')
+      (flags && showFlags ? `<div class="tile-flags" title="${escapeHTML(describeFlags(flags).join('\n'))}" style="font-size:${Math.min(9, subFit.size)}px">${escapeHTML(flags)}</div>` : '')
     : '';
 
   return el;
@@ -1056,7 +1084,9 @@ function renderLegend() {
     `<span class="legend-item legend-note">` +
     `<span class="legend-swatch" style="background:transparent;border-style:dotted;border-color:var(--text-primary)"></span>not cloned` +
     `</span>` +
-    `<span class="legend-note">✱ uncommitted · ↑ unpushed · ▤ archived</span>`
+    `<span class="legend-note" style="cursor:help" title="${escapeHTML(
+      Object.entries(FLAG_DEFS).map(([g, d]) => `${g}  ${d}`).join('\n')
+    )}">✱ uncommitted · ↑ unpushed · ▤ archived · ⧉ duplicate — hover any tile’s corner glyphs (or here) for all meanings</span>`
   );
 
   host.innerHTML = parts.join('<span></span>');
@@ -1429,6 +1459,8 @@ function showTooltip(r, ev) {
       ${r.dirtyFiles ? `<dt>Uncommitted</dt><dd>${num(r.dirtyFiles)} files</dd>` : ''}
       ${r.unpushedCommits ? `<dt>Unpushed</dt><dd>${num(r.unpushedCommits)} commits</dd>` : ''}
       ${r.duplicateOf ? `<dt>⧉</dt><dd>duplicate of another clone</dd>` : ''}
+      ${r.isArchived ? `<dt>▤</dt><dd>archived on GitHub</dd>` : ''}
+      ${v.provenance ? `<dt>✎</dt><dd>provenance set by hand</dd>` : ''}
       ${isStale(r) ? `<dt>⚠</dt><dd>new work since you judged it</dd>` : ''}
     </dl>`;
   tip().hidden = false;
