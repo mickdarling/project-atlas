@@ -16,6 +16,31 @@ npm start        # both
 Nothing is exposed. The server binds to `127.0.0.1` and there is no outbound call
 of any kind from the page.
 
+## Installed as a local app
+
+`./scripts/install.sh` sets up three things (re-runnable after any change):
+
+- **Server LaunchAgent** (`com.mickdarling.project-atlas`) — KeepAlive, starts at
+  login, restarts if it dies. The dashboard is simply always at
+  `http://127.0.0.1:4317`.
+- **Daily-scan LaunchAgent** (`com.mickdarling.project-atlas-scan`) — re-harvests
+  at 07:00 so the map opens fresh. Facts only; it can never touch `verdicts.json`.
+- **`~/Applications/Atlas.app`** — Dock-able launcher: makes sure the agent is up,
+  opens the dashboard.
+
+Logs land in `~/Library/Logs/project-atlas/`. To uninstall:
+`launchctl bootout gui/$UID/com.mickdarling.project-atlas{,-scan}` and delete the
+plists from `~/Library/LaunchAgents`.
+
+### Why this can't be cloud-hosted (and doesn't need to be)
+
+A browser page is sandboxed from the local filesystem no matter where it's served
+from — hosting it remotely makes local access *less* possible, not more. And the
+harvester's real work isn't reading files, it's **executing** `git` and `gh`
+against a hundred working copies, which no hosted page can ever do. The local
+server isn't a workaround; it's the correct shape. Bonus: page and server both
+local means nothing ever leaves the machine.
+
 ## The one rule that makes this survive
 
 **Two data layers, never mixed.**

@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.mickdarling.project-atlas-scan</string>
+
+  <!-- Re-harvest every morning so the dashboard opens fresh. Never touches
+       verdicts.json — the scan writes facts only. -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/node</string>
+    <string>/Users/mick/Developer/project-atlas/scan.js</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/mick/Developer/project-atlas</string>
+
+  <!-- gh needs to be findable for the GitHub half of the harvest. -->
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/bin:/bin</string>
+    <key>HOME</key>
+    <string>/Users/mick</string>
+  </dict>
+
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>7</integer>
+    <key>Minute</key>
+    <integer>0</integer>
+  </dict>
+
+  <key>StandardOutPath</key>
+  <string>/Users/mick/Library/Logs/project-atlas/scan.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/mick/Library/Logs/project-atlas/scan.log</string>
+</dict>
+</plist>

@@ -1,0 +1,15 @@
+#!/bin/sh
+# Project Atlas launcher. The server runs as a LaunchAgent; this just makes
+# sure it's up, then opens the dashboard.
+URL="http://127.0.0.1:4317"
+
+if ! curl -s -o /dev/null --max-time 1 "$URL/api/data"; then
+  # Agent not running (or was unloaded) — kick it, then wait briefly.
+  launchctl kickstart "gui/$(id -u)/com.mickdarling.project-atlas" 2>/dev/null
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    sleep 0.3
+    curl -s -o /dev/null --max-time 1 "$URL/api/data" && break
+  done
+fi
+
+exec open "$URL"
