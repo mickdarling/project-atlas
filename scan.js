@@ -469,7 +469,10 @@ function main() {
       myChurn,
       firstCommitDate: l.firstCommitDate,
       lastCommitDate: l.lastCommitDate,
-      lastActivity: maxDate(l.lastCommitDate, g && g.pushedAt),
+      // Only the primary clone borrows GitHub's push freshness. A backup copy
+      // showing "yesterday" because the REAL repo was pushed yesterday reads
+      // as a live project when it's actually a stale folder.
+      lastActivity: maxDate(l.lastCommitDate, g && isPrimary ? g.pushedAt : null),
       branch: l.branch,
       defaultBranch: g ? g.defaultBranch : null,
       dirtyFiles: l.dirtyFiles,
