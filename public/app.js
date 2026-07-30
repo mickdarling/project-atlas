@@ -28,6 +28,7 @@ const state = {
     scale: 'auto',
     size: 'sqrt-work',
     visibility: 'visible',
+    date: 'any',
   },
   panelPinned: false,
   undrawn: [],
@@ -134,6 +135,29 @@ const RECENCY_BINS = [
   { max: 730, label: '1–2 years' },
   { max: Infinity, label: '2 years +' },
 ];
+
+/* Date filter: a WINDOW on lastActivity — the same field recency colour reads,
+ * so the filter and the colour can never disagree about what "recent" means.
+ * `within` keeps repos touched in the last N days; `beyond` is the inverse
+ * (the graveyard view). Repos with no activity data count as maximally quiet:
+ * they pass every `beyond` filter and fail every `within` one. */
+const DATE_FILTERS = {
+  any: { label: 'Any time' },
+  week: { label: 'Past week', within: 7 },
+  month: { label: 'Past 30 days', within: 30 },
+  quarter: { label: 'Past 90 days', within: 90 },
+  year: { label: 'Past year', within: 365 },
+  'quiet-year': { label: 'Quiet 1 year +', beyond: 365 },
+  'quiet-2y': { label: 'Quiet 2 years +', beyond: 730 },
+};
+
+function passesDate(r) {
+  const f = DATE_FILTERS[state.filters.date];
+  if (!f || (!f.within && !f.beyond)) return true;
+  const d = daysSince(r.lastActivity);
+  if (f.within) return d !== null && d < f.within;
+  return d === null || d >= f.beyond;
+}
 
 const PRESENCE_LABEL = {
   both: 'Cloned & pushed',
@@ -565,6 +589,7 @@ function visibleRepos() {
   const q = state.filters.search.trim().toLowerCase();
   return state.repos.filter((r) => {
     if (!passesVisibility(r)) return false;
+    if (!passesDate(r)) return false;
     if (!q) return true;
     const v = verdict(r.key);
     const hay = [
@@ -1562,6 +1587,7 @@ function wireGlobal() {
   bind('#f-group', 'group');
   bind('#f-size', 'size');
   bind('#f-visibility', 'visibility');
+  bind('#f-date', 'date');
 
   $('#f-color').addEventListener('input', (e) => {
     state.filters.color = e.target.value;
@@ -1757,7 +1783,7 @@ function migrateVerdicts(verdicts, repos) {
  * a state you are already in changes nothing and pushes nothing.
  * ------------------------------------------------------------------ */
 
-const PREF_KEYS = ['group', 'color', 'size', 'hue', 'hueTo', 'scale', 'visibility'];
+const PREF_KEYS = ['group', 'color', 'size', 'hue', 'hueTo', 'scale', 'visibility', 'date'];
 
 function prefsSnapshot() {
   const p = { theme: themeName(), chrome: document.body.classList.contains('map-only') ? 'map' : 'full' };
@@ -1799,6 +1825,7 @@ function applyPrefs(p) {
   $('#f-color').value = state.filters.color;
   $('#f-size').value = state.filters.size;
   $('#f-visibility').value = state.filters.visibility;
+  $('#f-date').value = state.filters.date;
   $('#f-hue').value = state.filters.hue;
   $('#f-hue-to').value = state.filters.hueTo;
   $('#f-scale').value = state.filters.scale;
@@ -1899,6 +1926,7 @@ async function boot() {
       $('#f-color').value = state.filters.color;
       $('#f-size').value = state.filters.size;
       $('#f-visibility').value = state.filters.visibility;
+      $('#f-date').value = state.filters.date;
       $('#f-hue').value = state.filters.hue;
       $('#f-hue-to').value = state.filters.hueTo;
       $('#f-scale').value = state.filters.scale;

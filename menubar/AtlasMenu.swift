@@ -101,6 +101,15 @@ let SECTIONS: [(key: String, title: String, opts: [Opt])] = [
         Opt(value: "auto", label: "Auto — spread this set"),
         Opt(value: "fixed", label: "Fixed — absolute age"),
     ]),
+    ("date", "Worked on", [
+        Opt(value: "any", label: "Any time"),
+        Opt(value: "week", label: "Past week"),
+        Opt(value: "month", label: "Past 30 days"),
+        Opt(value: "quarter", label: "Past 90 days"),
+        Opt(value: "year", label: "Past year"),
+        Opt(value: "quiet-year", label: "Quiet 1 year +"),
+        Opt(value: "quiet-2y", label: "Quiet 2 years +"),
+    ]),
     ("visibility", "Showing", [
         Opt(value: "visible", label: "Visible only"),
         Opt(value: "all", label: "Everything"),
