@@ -33,6 +33,21 @@ const VERBOSE = args.includes('--verbose');
 function log(...m) { process.stderr.write(m.join(' ') + '\n'); }
 function vlog(...m) { if (VERBOSE) log(...m); }
 
+/* A scan takes minutes; a static "Updating…" is indistinguishable from a
+ * hang. Progress lands in a small file the server reads while a scan runs
+ * and relays to the menu bar and every open page. Best-effort by design —
+ * a failed progress write must never kill the harvest. */
+const PROGRESS = path.join(DATA_DIR, 'scan-progress.json');
+
+function reportProgress(phase, done, total) {
+  try {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    fs.writeFileSync(PROGRESS, JSON.stringify({
+      phase, done, total, at: new Date().toISOString(),
+    }) + '\n');
+  } catch { /* progress is a courtesy, not a dependency */ }
+}
+
 /* ------------------------------------------------------------------ *
  * 1. Walk the filesystem for git repos
  * ------------------------------------------------------------------ */
@@ -304,12 +319,14 @@ function main() {
   const startedAt = new Date().toISOString();
 
   log(`Scanning ${ROOT} ...`);
+  reportProgress('finding local repos', 0, 0);
   const dirs = findRepos(ROOT, 0, []);
   log(`  found ${dirs.length} local git repos`);
 
   const locals = [];
   let done = 0;
   for (const dir of dirs) {
+    reportProgress('probing local repos', done, dirs.length);
     const probed = probeRepo(dir);
     done++;
     if (done % 20 === 0) log(`  probed ${done}/${dirs.length}`);
@@ -362,8 +379,11 @@ function main() {
       const orgs = gh(['api', 'user/orgs', '--jq', '.[].login']).trim().split('\n').filter(Boolean);
       owners = [myLogin, ...orgs];
       log(`GitHub owners: ${owners.join(', ')}`);
+      let ownersDone = 0;
       for (const o of owners) {
+        reportProgress(`asking GitHub about ${o}`, ownersDone, owners.length);
         const rs = fetchOwnerRepos(o);
+        ownersDone++;
         log(`  ${o}: ${rs.length} repos`);
         ghRepos.push(...rs.map(normalizeGh));
       }
@@ -578,6 +598,7 @@ function main() {
 
   seedIdentity(myEmails, myNames, unmatched);
 
+  reportProgress('writing inventory', 0, 0);
   fs.mkdirSync(DATA_DIR, { recursive: true });
   fs.writeFileSync(
     OUT,

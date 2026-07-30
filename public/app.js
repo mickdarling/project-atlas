@@ -2402,6 +2402,14 @@ function connectEvents() {
   es.addEventListener('scan-start', () => {
     $('#scan-stamp').textContent = 'rescanning…';
   });
+  // A scan takes minutes — say where it is, not just that it is.
+  es.addEventListener('scan-progress', (e) => {
+    try {
+      const p = JSON.parse(e.data);
+      $('#scan-stamp').textContent =
+        `rescanning… ${p.phase}${p.total ? ` ${p.done}/${p.total}` : ''}`;
+    } catch { /* malformed event */ }
+  });
   es.addEventListener('scan-done', async (e) => {
     let ok = true;
     try { ok = JSON.parse(e.data).ok; } catch { /* assume ok */ }

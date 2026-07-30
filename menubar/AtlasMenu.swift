@@ -263,6 +263,16 @@ final class PanelController: NSViewController, NSMenuDelegate {
             let prefs = status?["prefs"] as? [String: Any] ?? [:]
             let scanning = status?["scanning"] as? Bool ?? false
 
+            // Mid-scan, say where it is, not just that it is running: the
+            // scanner reports its phase and counts through /api/status.
+            var busy = "Updating…"
+            if scanning, let prog = status?["progress"] as? [String: Any],
+               let phase = prog["phase"] as? String {
+                let done = prog["done"] as? Int ?? 0
+                let total = prog["total"] as? Int ?? 0
+                busy = total > 0 ? "Updating… \(phase) \(done)/\(total)" : "Updating… \(phase)"
+            }
+
             if self.serverUp, let counts = status?["counts"] as? [String: Any] {
                 let total = counts["total"] as? Int ?? 0
                 let issues = counts["openIssues"] as? Int ?? 0
@@ -271,7 +281,9 @@ final class PanelController: NSViewController, NSMenuDelegate {
                 if let gen = status?["generatedAt"] as? String, let d = parseISO(gen) {
                     line += " · updated \(agoString(d))"
                 }
-                self.statusLabel.stringValue = scanning ? "Updating…" : line
+                self.statusLabel.stringValue = scanning ? busy : line
+            } else if self.serverUp && scanning {
+                self.statusLabel.stringValue = busy
             } else {
                 self.statusLabel.stringValue = self.serverUp ? "Server up — no inventory yet" : "Server not running"
             }

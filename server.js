@@ -21,6 +21,7 @@ const PUBLIC_DIR = path.join(__dirname, 'public');
 const INVENTORY = path.join(DATA_DIR, 'inventory.json');
 const VERDICTS = path.join(DATA_DIR, 'verdicts.json');
 const PREFS = path.join(DATA_DIR, 'prefs.json');
+const PROGRESS = path.join(DATA_DIR, 'scan-progress.json');
 
 /* ------------------------------------------------------------------ *
  * Live events. The menu bar app writes prefs; every open page hears
@@ -101,6 +102,9 @@ const server = http.createServer(async (req, res) => {
     return send(res, 200, JSON.stringify({
       up: true,
       scanning,
+      // Only meaningful mid-scan; a stale progress file from the last run
+      // must not read as current activity.
+      progress: scanning ? readJSON(PROGRESS, null) : null,
       counts: inv ? inv.counts : null,
       generatedAt: inv ? inv.generatedAt : null,
       judged: Object.keys(readJSON(VERDICTS, {})).length,
@@ -154,7 +158,19 @@ const server = http.createServer(async (req, res) => {
     });
     let errTail = '';
     child.stderr.on('data', (d) => { errTail = (errTail + d).slice(-2000); });
+    // Relay the scanner's progress file to every open page while it runs,
+    // skipping unchanged states so the stream stays quiet between phases.
+    let lastProgress = '';
+    const progTimer = setInterval(() => {
+      const p = readJSON(PROGRESS, null);
+      if (!p) return;
+      const s = JSON.stringify(p);
+      if (s === lastProgress) return;
+      lastProgress = s;
+      broadcast('scan-progress', p);
+    }, 1000);
     child.on('close', (code) => {
+      clearInterval(progTimer);
       scanning = false;
       broadcast('scan-done', { ok: code === 0, code, errTail: code === 0 ? undefined : errTail });
     });
