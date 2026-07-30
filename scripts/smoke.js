@@ -86,6 +86,11 @@ function fail(msg) {
     if (r.code !== 200) fail(`${asset} returned ${r.code}`);
   }
 
+  // Version check answers. Fields vary by environment (offline, shallow
+  // clone); answering at all is the contract.
+  const ver = await request('GET', '/api/version');
+  if (ver.code !== 200) fail(`/api/version returned ${ver.code}`);
+
   // Unknown paths 404 rather than crash or leak.
   const missing = await request('GET', '/no-such-file.js');
   if (missing.code !== 404) fail(`unknown path returned ${missing.code}, expected 404`);

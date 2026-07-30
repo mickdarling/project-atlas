@@ -169,6 +169,11 @@ final class PanelController: NSViewController, NSMenuDelegate {
     let mapOnly = NSButton(checkboxWithTitle: "Map only (hide page controls)", target: nil, action: nil)
     let shareMode = NSButton(checkboxWithTitle: "Share mode (hide private names)", target: nil, action: nil)
     let openBtn = NSButton(title: "Open Dashboard", target: nil, action: nil)
+    // "Update" means the app's own code — surfaced only when origin/main
+    // actually has commits this install doesn't.
+    let updateLabel = NSTextField(labelWithString: "")
+    let updateBtn = NSButton(title: "Update App", target: nil, action: nil)
+    var updateRow: NSGridRow?
     // Vocabulary rule: "refresh" re-harvests CONTENT (repos, issues);
     // "update" is reserved for the app's own code and nothing else.
     let rescanBtn = NSButton(title: "Refresh Now", target: nil, action: nil)
@@ -193,11 +198,15 @@ final class PanelController: NSViewController, NSMenuDelegate {
         mapOnly.target = self; mapOnly.action = #selector(mapOnlyChanged)
         shareMode.target = self; shareMode.action = #selector(shareModeChanged)
         shareMode.toolTip = "Keep the shape, hide the identities: private repo and org names become stable pseudonyms; paths, descriptions, notes and tags are hidden. Numbers stay."
-        for b in [openBtn, rescanBtn, serverBtn, quitBtn] {
+        for b in [openBtn, rescanBtn, serverBtn, quitBtn, updateBtn] {
             b.bezelStyle = .rounded
             b.controlSize = .small
             b.font = .systemFont(ofSize: 11)
         }
+        updateBtn.target = self
+        updateBtn.action = #selector(updateApp)
+        updateLabel.font = .systemFont(ofSize: 11)
+        updateLabel.textColor = .labelColor
         mapOnly.font = .systemFont(ofSize: 12)
         shareMode.font = .systemFont(ofSize: 12)
 
@@ -206,6 +215,10 @@ final class PanelController: NSViewController, NSMenuDelegate {
 
         grid.addRow(with: [NSGridCell.emptyContentView, statusLabel])
         grid.addRow(with: [NSGridCell.emptyContentView, actions])
+        let updateStack = NSStackView(views: [updateLabel, updateBtn])
+        updateStack.spacing = 6
+        updateRow = grid.addRow(with: [NSGridCell.emptyContentView, updateStack])
+        updateRow?.isHidden = true // shown only when an update actually exists
         addSeparator(grid)
 
         for section in SECTIONS {
@@ -346,6 +359,36 @@ final class PanelController: NSViewController, NSMenuDelegate {
                  body: ["share": shareMode.state == .on ? "on" : "off"])
     }
 
+    // Called once per panel open, not on the 2 s refresh — the server caches
+    // the origin comparison (~30 min) so this stays cheap anyway.
+    func checkAppUpdate() {
+        httpJSON("/api/version", timeout: 25) { [weak self] v in
+            guard let self = self else { return }
+            let behind = v?["behind"] as? Int ?? 0
+            self.updateRow?.isHidden = behind <= 0
+            if behind > 0 {
+                self.updateLabel.stringValue =
+                    "App update available — \(behind) commit\(behind == 1 ? "" : "s") behind"
+                self.updateBtn.isEnabled = true
+            }
+        }
+    }
+
+    @objc func updateApp() {
+        let alert = NSAlert()
+        alert.messageText = "Update the app to the latest code?"
+        alert.informativeText =
+            "This pulls the latest code (fast-forward only) and reinstalls: the server and " +
+            "this menu bar app both restart. Your verdicts, prefs and inventory are untouched."
+        alert.addButton(withTitle: "Update")
+        alert.addButton(withTitle: "Cancel")
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        updateBtn.isEnabled = false
+        updateLabel.stringValue = "Updating the app… (restarts in a few seconds)"
+        httpJSON("/api/app-update", method: "POST", body: [:], timeout: 30)
+    }
+
     @objc func openDashboard() {
         NSWorkspace.shared.open(URL(string: BASE)!)
         owner?.closePanel()
@@ -478,6 +521,7 @@ class AppDelegate: NSResponder, NSApplicationDelegate, NSPopoverDelegate {
         if popover.isShown { closePanel(); return }
         guard let button = item.button else { return }
         panel.refresh()
+        panel.checkAppUpdate()
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         NSApp.activate(ignoringOtherApps: true)
 

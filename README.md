@@ -54,6 +54,17 @@ the way back from the page itself. Refreshes triggered from the menu (or the
 07:00 agent) soft-reload every open page's data when they finish — new facts,
 same view state, no page reload.
 
+### Updating the app
+
+"Update" means the app's own code — a *refresh* re-harvests content, and the two
+words never cross. When the panel opens, the server compares the running checkout
+against `origin/main` (cached ~30 minutes). If new commits exist, the panel shows
+"App update available (N commits)" with an **Update App** button. Confirming runs
+`git pull --ff-only` plus the same `scripts/install.sh` a manual install uses,
+then the server and menu bar app restart on the new code (`update.log` in the
+logs directory records it). Fast-forward only: a diverged local checkout is
+reported, never merged. When the install is current, nothing is shown at all.
+
 Logs land in `~/Library/Logs/project-atlas/`. To uninstall:
 `launchctl bootout gui/$UID/com.mickdarling.project-atlas{,-scan}` and delete the
 plists from `~/Library/LaunchAgents`.

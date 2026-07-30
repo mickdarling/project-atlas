@@ -86,6 +86,42 @@ function readBody(req, limitBytes = 8 * 1024 * 1024) {
   });
 }
 
+/* ------------------------------------------------------------------ *
+ * App version. "Update" is reserved for the app's own code: these two
+ * routes detect new commits on origin/main and apply them through the
+ * same audited path as a manual install — scripts/install.sh.
+ * ------------------------------------------------------------------ */
+const GIT_ENV = { ...process.env, PATH: `/opt/homebrew/bin:${process.env.PATH || '/usr/bin:/bin'}` };
+let versionCache = { at: 0, result: null };
+
+function git(args, cb) {
+  execFile('git', args, { cwd: __dirname, encoding: 'utf8', timeout: 20000, env: GIT_ENV }, cb);
+}
+
+function checkVersion(force, done) {
+  const MAX_AGE = 30 * 60 * 1000; // panel opens stay cheap; the fetch is rare
+  if (!force && versionCache.result && Date.now() - versionCache.at < MAX_AGE) {
+    return done(versionCache.result);
+  }
+  git(['rev-parse', '--short', 'HEAD'], (err, head) => {
+    if (err) return done({ error: 'not a git checkout' });
+    git(['fetch', '--quiet', 'origin', 'main'], (fetchErr) => {
+      // Offline is not an error state: report what we know and say the
+      // comparison may be stale.
+      git(['rev-list', '--count', 'HEAD..origin/main'], (countErr, count) => {
+        const result = {
+          commit: head.trim(),
+          behind: countErr ? null : +count.trim(),
+          fetched: !fetchErr,
+          checkedAt: new Date().toISOString(),
+        };
+        versionCache = { at: Date.now(), result };
+        done(result);
+      });
+    });
+  });
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${HOST}:${PORT}`);
   const route = url.pathname;
@@ -112,6 +148,37 @@ const server = http.createServer(async (req, res) => {
       judged: Object.keys(readJSON(VERDICTS, {})).length,
       prefs: readJSON(PREFS, {}),
     }));
+  }
+
+  // The app's own code: current commit and how far behind origin/main it is.
+  if (route === '/api/version' && req.method === 'GET') {
+    return checkVersion(url.searchParams.get('fresh') === '1',
+      (v) => send(res, 200, JSON.stringify(v)));
+  }
+
+  // Apply an update through the same audited path as a manual install.
+  if (route === '/api/app-update' && req.method === 'POST') {
+    return checkVersion(true, (v) => {
+      if (!v.behind) {
+        return send(res, 409, JSON.stringify({
+          error: v.behind === 0 ? 'already up to date' : 'cannot compare against origin/main',
+        }));
+      }
+      // install.sh restarts this very server, so the updater must outlive it:
+      // detached, its own session, output appended to update.log.
+      const logDir = path.join(process.env.HOME || '/tmp', 'Library', 'Logs', 'project-atlas');
+      fs.mkdirSync(logDir, { recursive: true });
+      const logFd = fs.openSync(path.join(logDir, 'update.log'), 'a');
+      const child = spawn('/bin/sh', ['-c', 'git pull --ff-only && sh scripts/install.sh'], {
+        cwd: __dirname,
+        detached: true,
+        stdio: ['ignore', logFd, logFd],
+        env: GIT_ENV,
+      });
+      child.unref();
+      fs.closeSync(logFd);
+      return send(res, 202, JSON.stringify({ started: true, from: v.commit, behind: v.behind }));
+    });
   }
 
   if (route === '/api/prefs' && req.method === 'GET') {
