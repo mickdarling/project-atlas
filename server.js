@@ -16,7 +16,9 @@ const { execFile, spawn } = require('child_process');
 
 const PORT = +(process.env.ATLAS_PORT || 4317);
 const HOST = '127.0.0.1';
-const DATA_DIR = path.join(__dirname, 'data');
+// ATLAS_DATA lets tests point the server at a scratch directory instead of
+// the real prefs/verdicts. Unset means the real thing.
+const DATA_DIR = process.env.ATLAS_DATA || path.join(__dirname, 'data');
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const INVENTORY = path.join(DATA_DIR, 'inventory.json');
 const VERDICTS = path.join(DATA_DIR, 'verdicts.json');
