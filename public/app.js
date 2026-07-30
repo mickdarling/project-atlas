@@ -31,6 +31,7 @@ const state = {
     date: 'any',
   },
   panelPinned: false,
+  triage: null,
   undrawn: [],
   recencyScale: null,
   /* Focus is additive and by inclusion: you pick the groups you want to see,
@@ -1534,6 +1535,221 @@ async function save() {
   }
 }
 
+/* ------------------------------------------------------------- triage *
+ * Judging 170 repos by clicking tiles one at a time is a chore nobody
+ * finishes. Triage mode turns it into a card pass: the untriaged set,
+ * coldest first (cold ones are the quick kills), one 5-second call per
+ * card. Skips are free, undo is one key, and verdicts stay one-at-a-time
+ * appends to verdicts.json — no new format, no forced judgments.
+ * -------------------------------------------------------------------- */
+
+function untriagedQueue() {
+  return state.repos
+    .filter((r) => !verdict(r.key).status && visibilityOf(r) === 'visible')
+    .sort((a, b) => {
+      // Coldest first; never-touched counts as coldest of all.
+      const da = a.lastActivity ? Date.parse(a.lastActivity) : -Infinity;
+      const db = b.lastActivity ? Date.parse(b.lastActivity) : -Infinity;
+      return da - db;
+    })
+    .map((r) => r.key);
+}
+
+function startTriage() {
+  state.triage = { queue: untriagedQueue(), idx: 0, judged: 0, skipped: 0, history: [] };
+  closePanel(true);
+  $('#btn-triage').setAttribute('aria-pressed', 'true');
+  renderTriage();
+}
+
+function exitTriage() {
+  state.triage = null;
+  $('#triage').hidden = true;
+  $('#btn-triage').setAttribute('aria-pressed', 'false');
+}
+
+/** The repo the current card shows. Anything judged or filed away since the
+ *  queue was built (another page, the panel) is passed over silently. */
+function triageRepo() {
+  const t = state.triage;
+  if (!t) return null;
+  while (t.idx < t.queue.length) {
+    const r = state.repos.find((x) => x.key === t.queue[t.idx]);
+    if (r && !verdict(r.key).status && visibilityOf(r) === 'visible') return r;
+    t.idx++;
+  }
+  return null;
+}
+
+function triageJudge(patch) {
+  const t = state.triage;
+  const r = triageRepo();
+  if (!t || !r) return;
+  t.history.push({ kind: 'judge', key: r.key, idx: t.idx,
+    prev: state.verdicts[r.key] ? { ...state.verdicts[r.key] } : null });
+  setVerdict(r, patch, false);
+  t.judged++;
+  t.idx++;
+  renderTriage();
+}
+
+function triageSkip() {
+  const t = state.triage;
+  if (!t || !triageRepo()) return;
+  t.history.push({ kind: 'skip', idx: t.idx });
+  t.skipped++;
+  t.idx++;
+  renderTriage();
+}
+
+function triageUndo() {
+  const t = state.triage;
+  if (!t || !t.history.length) return;
+  const h = t.history.pop();
+  if (h.kind === 'judge') {
+    if (h.prev) state.verdicts[h.key] = h.prev; else delete state.verdicts[h.key];
+    t.judged--;
+    scheduleSave();
+    render();
+  } else if (h.kind === 'skip') {
+    t.skipped--;
+  } else if (h.kind === 'batch') {
+    for (const e of h.entries) {
+      if (e.prev) state.verdicts[e.key] = e.prev; else delete state.verdicts[e.key];
+    }
+    t.judged -= h.entries.length;
+    t.queue = h.queue;
+    scheduleSave();
+    render();
+  }
+  t.idx = h.idx;
+  renderTriage();
+}
+
+/** "Everything left in this org is dead" — the whole-cluster kill, with the
+ *  two-step confirm living on the button itself. Fully undoable as one step. */
+function triageBatchDead() {
+  const t = state.triage;
+  const r = triageRepo();
+  if (!t || !r) return;
+  const group = r.group || 'Unaffiliated';
+  const prevQueue = [...t.queue];
+  const entries = [];
+  for (let i = t.idx; i < t.queue.length; i++) {
+    const c = state.repos.find((x) => x.key === t.queue[i]);
+    if (!c || (c.group || 'Unaffiliated') !== group) continue;
+    if (verdict(c.key).status || visibilityOf(c) !== 'visible') continue;
+    entries.push({ key: c.key, prev: state.verdicts[c.key] ? { ...state.verdicts[c.key] } : null });
+    const next = { ...(state.verdicts[c.key] || {}), status: 'dead', markedAt: new Date().toISOString() };
+    if (c.lastActivity) next.seenLastCommit = c.lastActivity;
+    state.verdicts[c.key] = next;
+  }
+  if (!entries.length) return;
+  t.history.push({ kind: 'batch', idx: t.idx, entries, queue: prevQueue });
+  const dead = new Set(entries.map((e) => e.key));
+  t.queue = t.queue.filter((k, i) => i < t.idx || !dead.has(k));
+  t.judged += entries.length;
+  scheduleSave();
+  render();
+  renderTriage();
+}
+
+function renderTriage() {
+  const host = $('#triage');
+  const t = state.triage;
+  if (!t) { host.hidden = true; return; }
+  host.hidden = false;
+
+  const total = t.queue.length;
+  const progress = `${t.judged} of ${total} judged this session · ${t.skipped} skipped`;
+  const r = triageRepo();
+
+  if (!r) {
+    host.innerHTML = `<div class="triage-card">
+      <div class="triage-progress"><span>${escapeHTML(progress)}</span></div>
+      <h2>Nothing left to judge.</h2>
+      <p class="triage-desc">${t.judged} judged this session.
+        ${t.skipped ? `${t.skipped} skipped — skips stay untriaged, run triage again any time.` : ''}</p>
+      <div class="triage-actions"><button type="button" id="triage-exit">Exit triage</button></div>
+    </div>`;
+    $('#triage-exit').addEventListener('click', exitTriage);
+    return;
+  }
+
+  const v = verdict(r.key);
+  const p = provRec(r);
+  const groupName = r.group || 'Unaffiliated';
+  const remainingInGroup = t.queue.slice(t.idx).filter((k) => {
+    const c = state.repos.find((x) => x.key === k);
+    return c && (c.group || 'Unaffiliated') === groupName &&
+      !verdict(k).status && visibilityOf(c) === 'visible';
+  }).length;
+  const authors = (r.topAuthors || []).slice(0, 3)
+    .map((a) => `${a.name} (${num(a.commits)})`).join(', ');
+
+  host.innerHTML = `<div class="triage-card">
+    <div class="triage-progress">
+      <span>${escapeHTML(progress)}</span>
+      <button type="button" id="triage-exit" title="Leave triage — Esc">× exit</button>
+    </div>
+    <h2>${escapeHTML(r.name)}</h2>
+    <div class="triage-org">${escapeHTML(r.slug || r.path || '')} · ${escapeHTML(groupName)}
+      · ${p.glyph} ${escapeHTML(p.label)}</div>
+    ${r.description ? `<p class="triage-desc">${escapeHTML(r.description)}</p>` : ''}
+    <dl class="triage-facts">
+      <dt>Last work</dt><dd>${escapeHTML(fmtAgo(r.lastActivity))}</dd>
+      <dt>Your commits</dt><dd>${num(effortOf(r))}${r.myChurn ? ` · ${num(r.myChurn)} lines` : ''}</dd>
+      <dt>All commits</dt><dd>${num(r.commits)}</dd>
+      <dt>Open</dt><dd>${num(r.openIssues)} issues · ${num(r.openPRs)} PRs</dd>
+      ${authors ? `<dt>Top authors</dt><dd>${escapeHTML(authors)}</dd>` : ''}
+      ${r.language ? `<dt>Language</dt><dd>${escapeHTML(r.language)}</dd>` : ''}
+      ${v.priority ? `<dt>Priority</dt><dd>${escapeHTML(PRIORITY_LABEL[v.priority])}</dd>` : ''}
+    </dl>
+    <div class="seg triage-statuses">
+      ${STATUSES.map((s) => `<button type="button" data-status="${s.id}">
+        <span class="dot" style="background:${ordinalRamp()[s.step]}"></span>${s.glyph} ${s.label}
+        <kbd>${s.key}</kbd></button>`).join('')}
+    </div>
+    <div class="triage-actions">
+      <button type="button" id="triage-skip">Skip <kbd>space</kbd></button>
+      <button type="button" id="triage-undo" ${t.history.length ? '' : 'disabled'}>Undo <kbd>z</kbd></button>
+      <button type="button" id="triage-hide" title="Off my screen for now">◌ Hide <kbd>h</kbd></button>
+      <button type="button" id="triage-ignore" title="Not my project, stop counting it">⊘ Ignore <kbd>i</kbd></button>
+      ${remainingInGroup > 1 ? `<button type="button" id="triage-batch" class="triage-danger"
+        title="Mark every remaining untriaged project in ${escapeHTML(groupName)} as dead — undoable with z">
+        ✕ Rest of ${escapeHTML(groupName)} is dead (${remainingInGroup})</button>` : ''}
+    </div>
+  </div>`;
+
+  $('#triage-exit').addEventListener('click', exitTriage);
+  $('#triage-skip').addEventListener('click', triageSkip);
+  $('#triage-undo').addEventListener('click', triageUndo);
+  $('#triage-hide').addEventListener('click', () => triageJudge({ visibility: 'hidden' }));
+  $('#triage-ignore').addEventListener('click', () => triageJudge({ visibility: 'ignored' }));
+  host.querySelectorAll('[data-status]').forEach((b) => {
+    b.addEventListener('click', () => triageJudge({ status: b.dataset.status }));
+  });
+  const batch = $('#triage-batch');
+  if (batch) {
+    // Two-step confirm on the button itself: first click arms, second fires.
+    // A modal would steal the keyboard this mode is built around.
+    batch.addEventListener('click', () => {
+      if (!batch.dataset.armed) {
+        batch.dataset.armed = '1';
+        batch.textContent = `Really mark ${remainingInGroup} projects dead? Click again`;
+        setTimeout(() => {
+          if (document.contains(batch)) {
+            delete batch.dataset.armed;
+            batch.textContent = `✕ Rest of ${groupName} is dead (${remainingInGroup})`;
+          }
+        }, 4000);
+      } else {
+        triageBatchDead();
+      }
+    });
+  }
+}
+
 /* ------------------------------------------------------------ tooltip */
 
 const tip = () => $('#tooltip');
@@ -1688,6 +1904,10 @@ function wireGlobal() {
   const chromeExit = $('#chrome-exit');
   if (chromeExit) chromeExit.addEventListener('click', () => setChrome('full'));
 
+  $('#btn-triage').addEventListener('click', () => {
+    if (state.triage) exitTriage(); else startTriage();
+  });
+
   $('#btn-table').addEventListener('click', (e) => {
     const on = e.target.getAttribute('aria-pressed') !== 'true';
     e.target.setAttribute('aria-pressed', String(on));
@@ -1731,6 +1951,29 @@ function wireGlobal() {
   document.addEventListener('keydown', (e) => {
     const tag = document.activeElement && document.activeElement.tagName;
     if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+
+    // Triage mode owns the keyboard while it is up.
+    if (state.triage) {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const k = e.key;
+      if (k === 'Escape') { e.preventDefault(); exitTriage(); return; }
+      if (k === ' ' || k === 'Enter') { e.preventDefault(); triageSkip(); return; }
+      if (k.toLowerCase() === 'z') { e.preventDefault(); triageUndo(); return; }
+      const cur = triageRepo();
+      if (!cur) return;
+      const s = STATUSES.find((x) => x.key === k.toLowerCase());
+      if (s) { e.preventDefault(); triageJudge({ status: s.id }); return; }
+      if (k === 'h') { e.preventDefault(); triageJudge({ visibility: 'hidden' }); return; }
+      if (k === 'i') { e.preventDefault(); triageJudge({ visibility: 'ignored' }); return; }
+      if (k === '1' || k === '2' || k === '3') {
+        // Priority is a bonus call on the current card — it doesn't advance.
+        e.preventDefault();
+        setVerdict(cur, { priority: +k }, false);
+        renderTriage();
+      }
+      return;
+    }
+
     if (e.key === 'Escape') { closePanel(true); return; }
     if (!state.selectedKey || e.metaKey || e.ctrlKey || e.altKey) return;
     const r = state.repos.find((x) => x.key === state.selectedKey);

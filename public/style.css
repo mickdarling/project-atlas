@@ -640,6 +640,86 @@ main#stage[hidden] { display: none; }
 #table-view tbody tr:hover { background: var(--page); }
 #table-view tbody tr { cursor: pointer; }
 
+/* ------------------------------------------------------------- triage */
+
+#triage {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: grid;
+  place-items: center;
+  /* The map stays visible behind the card — judged tiles recolour live,
+     which is the progress bar that actually means something. */
+  background: rgba(0, 0, 0, 0.34);
+}
+#triage[hidden] { display: none; }
+
+.triage-card {
+  width: min(560px, 92vw);
+  max-height: 86vh;
+  overflow-y: auto;
+  background: var(--surface-1);
+  border: 1px solid var(--group-edge);
+  border-radius: 12px;
+  padding: 16px 22px 20px;
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.38);
+}
+.triage-progress {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 11px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  margin-bottom: 10px;
+}
+.triage-progress button {
+  font: inherit; font-size: 11px;
+  color: var(--text-secondary); background: var(--page);
+  border: 1px solid var(--border); border-radius: 6px;
+  padding: 3px 9px; cursor: pointer;
+}
+.triage-progress button:hover { color: var(--text-primary); border-color: var(--baseline); }
+.triage-card h2 { font-size: 20px; margin: 0 0 2px; word-break: break-word; }
+.triage-org { color: var(--text-muted); font-size: 12px; margin-bottom: 8px; }
+.triage-desc { color: var(--text-secondary); font-size: 13px; margin: 0 0 10px; }
+.triage-facts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 3px 14px;
+  font-size: 13px;
+  margin: 0 0 14px;
+}
+.triage-facts dt { color: var(--text-muted); }
+.triage-facts dd { margin: 0; font-variant-numeric: tabular-nums; }
+.triage-statuses { margin-bottom: 10px; }
+.triage-card kbd {
+  font: inherit; font-size: 10px;
+  padding: 0 4px;
+  border: 1px solid var(--baseline);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  color: var(--text-muted);
+}
+.triage-actions { display: flex; flex-wrap: wrap; gap: 5px; }
+.triage-actions button {
+  font: inherit; font-size: 12px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--page);
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: inline-flex; align-items: center; gap: 5px;
+}
+.triage-actions button:hover:not(:disabled) { color: var(--text-primary); border-color: var(--baseline); }
+.triage-actions button:disabled { opacity: 0.45; cursor: default; }
+.triage-actions .triage-danger { border-color: var(--critical); color: var(--critical); }
+.triage-actions .triage-danger:hover { color: var(--critical); }
+.triage-actions .triage-danger[data-armed],
+.triage-actions .triage-danger[data-armed]:hover { background: var(--critical); color: var(--critical-ink); }
+
 /* --------------------------------------------------------------- hint */
 
 .hint {

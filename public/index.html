@@ -112,6 +112,8 @@
     </label>
 
     <div class="ctl-buttons">
+      <button type="button" id="btn-triage" aria-pressed="false"
+              title="Judge the untriaged set one card at a time, coldest first">Triage</button>
       <button type="button" id="btn-table" aria-pressed="false">Table</button>
       <button type="button" id="btn-theme" title="Toggle light / dark">◑</button>
       <button type="button" id="btn-export" title="Download verdicts.json">Export</button>
@@ -155,6 +157,8 @@
   <div id="panel-body"></div>
 </aside>
 </div>
+
+<div id="triage" hidden aria-label="Triage mode"></div>
 
 <div id="tooltip" role="tooltip" hidden></div>
 
