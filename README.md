@@ -96,6 +96,39 @@ about *your* portfolio and is gitignored, never pushed. `verdicts.json` is the o
 file that can't be regenerated, so back it up somewhere private (the **Export**
 button downloads it; a private gist or your own backups both work).
 
+## AI access: the MCP-AQL adapter
+
+`mcp/server.js` is a stdio MCP server giving an AI session visibility and
+control over the Atlas, built on the [MCP-AQL spec](https://github.com/MCPAQL/spec)'s
+five CRUDE endpoints (`mcp_aql_create/read/update/delete/execute`; `--single`
+collapses them to one `mcp_aql`). Register it with:
+
+```
+claude mcp add atlas -- node <this repo>/mcp/server.js
+```
+
+It proxies the running server at `127.0.0.1:4317` rather than reading `data/`
+directly, so the Atlas server stays the single writer and every open page sees
+AI actions live over SSE. Start with
+`{operation: "introspect", params: {query: "operations"}}` on the READ endpoint —
+the full catalog (~20 operations) is discovered at runtime, not carried in tool
+schemas.
+
+The two-layer rule extends to a third party:
+
+- **Facts are read-only through every endpoint.** Nothing here writes
+  `inventory.json`.
+- **Judgments written via MCP are stamped `via: "mcp"`** — your calls and the
+  AI's coexist in `verdicts.json` but are never indistinguishable.
+- **EXECUTE stays behind explicit approval** in the client (refresh takes
+  minutes; reveal touches your Finder). App self-update is deliberately not
+  exposed.
+
+Batch is supported (`operations: [...]`, processed in order, per-op results) —
+the intended shape for an AI-assisted triage pass: discuss, then one batch of
+attributed `set_status` calls. `update_prefs` drives the visible map live, so
+an AI can regroup or recolour the treemap while talking about it.
+
 ## What it scans
 
 Both sides, reconciled by remote URL:

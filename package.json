@@ -8,7 +8,7 @@
     "scan:local": "node scan.js --no-github",
     "serve": "node server.js",
     "start": "node scan.js && node server.js",
-    "test": "node scripts/smoke.js"
+    "test": "node scripts/smoke.js && node scripts/mcp-smoke.js"
   },
   "engines": {
     "node": ">=18"

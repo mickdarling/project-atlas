@@ -17,12 +17,14 @@ jobs:
       - name: Syntax-check every JS file
         run: |
           set -e
-          for f in server.js scan.js tools-genramps.mjs public/*.js scripts/*.js; do
+          for f in server.js scan.js tools-genramps.mjs public/*.js scripts/*.js mcp/*.js; do
             echo "check $f"
             node --check "$f"
           done
       - name: Server smoke test
         run: node scripts/smoke.js
+      - name: MCP adapter smoke test
+        run: node scripts/mcp-smoke.js
 
   menubar:
     name: Menu bar app
