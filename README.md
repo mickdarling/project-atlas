@@ -310,7 +310,11 @@ reveal private work. **Share** keeps the picture and drops the identities:
 private repos become stable pseudonyms (`project-k3f2` — hashed from the repo's
 key, so it reads the same in every screenshot and after every rescan), private
 orgs become `org-xyz`, and descriptions, paths, notes, tags, authors and
-hide-reasons vanish from every surface. Public repos keep their real names —
+hide-reasons vanish from every surface. A pseudonym protects the name from you
+too, so any maskable project can carry an **aka** — a share name you set in its
+panel (**Share name**), recognizable to you and opaque to outsiders, used
+everywhere share mode would show the pseudonym. Clear it to fall back. It lives
+in `verdicts.json` with your other calls, and it's searchable. Public repos keep their real names —
 they're on GitHub anyway — and the numbers stay, because numbers are the point
 of sharing. Compose with **map only** for a clean screenshot.
 

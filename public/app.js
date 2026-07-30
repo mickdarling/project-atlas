@@ -269,7 +269,10 @@ function orgHasPublic(name) {
 }
 
 function dispName(r) {
-  return !shareOn() || isPublicRepo(r) ? r.name : repoAlias(r);
+  if (!shareOn() || isPublicRepo(r)) return r.name;
+  // Your chosen share name beats the hash: recognizable to you, opaque to
+  // everyone else. No aka set = the present process, a stable pseudonym.
+  return verdict(r.key).aka || repoAlias(r);
 }
 
 function dispOrg(name) {
@@ -743,7 +746,7 @@ function visibleRepos() {
     const v = verdict(r.key);
     const hay = [
       r.name, r.owner, r.path, r.language, r.description, r.slug,
-      ...(r.topics || []), ...(v.tags || []), v.note, v.hiddenReason,
+      ...(r.topics || []), ...(v.tags || []), v.note, v.hiddenReason, v.aka,
     ].filter(Boolean).join(' ').toLowerCase();
     return hay.includes(q);
   });
@@ -1467,6 +1470,15 @@ function openPanel(key) {
       <textarea id="note-input" placeholder="What is this, why does it matter, what's next…">${escapeHTML(v.note || '')}</textarea>
     </div>`}
 
+    ${!isPublicRepo(r) ? `<div class="panel-section">
+      <h3>Share name (aka)</h3>
+      <input type="text" id="aka-input" placeholder="${escapeHTML(repoAlias(r))} — set a name you'll recognize"
+             value="${escapeHTML(v.aka || '')}">
+      <p class="seg-help">Used instead of the random pseudonym when Share mode masks this
+      project. Pick something <em>you</em> recognize and outsiders won't. Clear it to fall
+      back to the pseudonym. Public projects keep their real names and don't need one.</p>
+    </div>` : ''}
+
     <div class="panel-links">
       ${r.url && (!shareOn() || isPublicRepo(r)) ? `<a href="${escapeHTML(r.url)}" target="_blank" rel="noopener">GitHub ↗</a>` : ''}
       ${r.absPath && !shareOn() ? `<button type="button" id="btn-reveal">Reveal in Finder</button>` : ''}
@@ -1621,6 +1633,9 @@ function wirePanel(r) {
 
   const note = body.querySelector('#note-input');
   if (note) note.addEventListener('change', () => setVerdict(r, { note: note.value }, false));
+
+  const aka = body.querySelector('#aka-input');
+  if (aka) aka.addEventListener('change', () => setVerdict(r, { aka: aka.value.trim() }, false));
 
   // Cluster actions act on the SIBLING clone, then re-open this panel so the
   // list reflects what just happened.
