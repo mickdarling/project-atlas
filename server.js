@@ -253,6 +253,9 @@ const server = http.createServer(async (req, res) => {
         return send(res, 400, JSON.stringify({ error: 'expected an object' }));
       }
       writeJSONAtomic(VERDICTS, parsed);
+      // Tell every open page. The writer hears its own echo too — the page
+      // guards against merging over a pending edit on its side.
+      broadcast('verdicts-changed', { count: Object.keys(parsed).length });
       return send(res, 200, JSON.stringify({ ok: true, count: Object.keys(parsed).length }));
     } catch (err) {
       return send(res, 400, JSON.stringify({ error: err.message }));

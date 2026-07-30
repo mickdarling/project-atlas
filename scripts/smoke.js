@@ -86,6 +86,22 @@ function fail(msg) {
     if (r.code !== 200) fail(`${asset} returned ${r.code}`);
   }
 
+  // A verdict write announces itself over SSE so open pages adopt it live.
+  await new Promise((resolve, reject) => {
+    const sub = http.get({ ...BASE, path: '/api/events' }, (res) => {
+      let buf = '';
+      res.on('data', (c) => {
+        buf += c;
+        if (buf.includes('event: verdicts-changed')) { sub.destroy(); resolve(); }
+      });
+    });
+    sub.on('error', () => { /* destroyed on success */ });
+    setTimeout(() => {
+      request('PUT', '/api/verdicts', { 'local:x': { status: 'dead', markedAt: '2026-01-01T00:00:00Z' } });
+    }, 200);
+    setTimeout(() => { sub.destroy(); reject(new Error('verdicts-changed never arrived on /api/events')); }, 5000);
+  });
+
   // Version check answers. Fields vary by environment (offline, shallow
   // clone); answering at all is the contract.
   const ver = await request('GET', '/api/version');
