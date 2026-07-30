@@ -1,5 +1,6 @@
 # Harvested facts — regenerate any time with `npm run scan`.
 data/inventory.json
+data/scan-progress.json
 data/*.tmp
 
 .DS_Store
