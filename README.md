@@ -28,10 +28,15 @@ of any kind from the page.
 - **`~/Applications/Atlas.app`** — Dock-able launcher: makes sure the agent is up,
   opens the dashboard.
 - **Menu bar app** (`AtlasMenu.app`, the ⊞ icon) — native Swift, compiled by the
-  installer, no dependencies. Status at a glance, **Open Dashboard**, **Rescan
-  Now**, **Stop/Start Server**, and the full view configuration: Group By, Color
-  By, Area, Palette, Scale, Showing, Theme — plus **Map Only**, which strips the
-  page to just the treemap.
+  installer, no dependencies. Status at a glance **with its date** ("178 projects
+  · 2,813 open issues · updated 2 hr. ago"), **Open Dashboard**, **Update Now**,
+  **Stop/Start Server**, and the full view configuration: Group By, Color By,
+  Accent By, Area, Palette, Scale, Worked On, Showing, Theme — plus **Map Only**
+  and **Share Mode**. The icon itself reports state without opening the panel:
+  the plain grid when data is fresh, rotating arrows while a scan runs, a
+  clock-with-exclamation when the inventory is over a day old (the scan is
+  daily, so stale means something's wrong), dimmed when the server is down.
+  A 60 s background poll keeps it honest.
 
 ### How the menu bar drives the page
 
@@ -161,6 +166,15 @@ with the most history is primary and carries the GitHub metadata; the rest are
 marked `⧉` and report no issue count, so four copies of one repo can't report its
 860 issues four times. They're prime candidates for hiding.
 
+The panel makes that actionable: open any copy and the ⧉ note lists **every**
+working copy of the slug — path, commit count, last work, which is primary, and a
+badge on backup-looking paths (`*backup*`, `*archive*`, `-old`, `copy`). Each
+non-primary copy gets one-click **Hide as duplicate** (files it away with the
+reason "duplicate", reversible right there or via Showing → Only hidden) and
+**Reveal in Finder**. Deleting a folder stays a human act in Finder — the tool
+flags and files, it never rms. **Group by → Duplicate clusters** turns the whole
+set into per-slug groups so all of them can be resolved in one sitting.
+
 ### Focus: pick what you want to see
 
 Click an organization's header and it expands to fill the map. Everything else
@@ -251,6 +265,52 @@ Click any tile. Or select one and use the keyboard:
 | `i` | ignore — not my project, stop counting it |
 | `p` | pin the panel |
 | `esc` | close the panel |
+
+### Triage mode: the untriaged set as a card pass
+
+Judging 170 repos by clicking tiles one at a time is a chore nobody finishes. The
+**Triage** button turns it into a card pass: every untriaged, visible project, one
+at a time, **coldest first** — cold ones are the quick kills. Each card carries
+what a 5-second call needs: last work, your commits and lines, open issues,
+description, top authors.
+
+The keys above judge and advance. **Space or enter skips** — skips are free,
+triage never forces a judgment. **`z` undoes** the last judgment, skip, or batch.
+`1`–`3` set priority without advancing. When one org's remainder is all dead,
+the "rest of this org is dead (N)" button does it in one stroke — it arms on the
+first click and fires on the second, and `z` takes the whole batch back. Verdicts
+stay one-at-a-time appends to `verdicts.json`; the map behind the card recolours
+live as you work.
+
+### Worked on: filter by date
+
+Recency is also a *filter*, not just a colour. The **Worked on** control keeps
+only projects touched in the last week / 30 / 90 / 365 days — or the inverse,
+**quiet 1 year + / 2 years +**, the graveyard view. It reads `lastActivity`, the
+same field recency colour reads, so the filter and the colour can never disagree.
+The auto scale then re-spreads the ramp across whatever survives.
+
+### Share mode: the shape without the names
+
+The map is worth showing people, but tile names, orgs, paths and descriptions
+reveal private work. **Share** keeps the picture and drops the identities:
+private repos become stable pseudonyms (`project-k3f2` — hashed from the repo's
+key, so it reads the same in every screenshot and after every rescan), private
+orgs become `org-xyz`, and descriptions, paths, notes, tags, authors and
+hide-reasons vanish from every surface. Public repos keep their real names —
+they're on GitHub anyway — and the numbers stay, because numbers are the point
+of sharing. Compose with **map only** for a clean screenshot.
+
+### Accent: a second variable per tile
+
+**Accent by** draws a folder-tab strip along each tile's top edge carrying a
+second encoding — recency, issues, status, priority, provenance, or the
+**research flag** (topics/tags saying research / paper / results / findings).
+Off by default: one variable is the right default, two is a choice. The tab's
+hue pair is picked to avoid the fill's, a 1px separator keeps the two touching
+encodings apart, and the palette badge vouches for both ramps — including a
+fill-vs-tab check under every colour-vision simulation, because two adjacent
+ramps interact in ways each-alone validation misses.
 
 ### Nothing you file away becomes unreachable
 
