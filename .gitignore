@@ -11,3 +11,6 @@ data/prefs.json
 # YOUR portfolio never leaves your machine.
 data/verdicts.json
 data/identity.json
+
+# Dollhouse MCP session cache — tool droppings, not project files.
+.dollhousemcp/
