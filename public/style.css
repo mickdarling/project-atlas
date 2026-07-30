@@ -446,6 +446,41 @@ main#stage[hidden] { display: none; }
 }
 #panel[hidden] { display: none; }
 
+/* The panel's left edge is a grab handle: a 6px strip with a centered grip
+   pill that brightens on hover. Above the sticky tools bar so it stays
+   grabbable at the top. */
+#panel-resizer {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: col-resize;
+  z-index: 3;
+}
+#panel-resizer::after {
+  content: '';
+  position: absolute;
+  left: 2px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 40px;
+  border-radius: 3px;
+  background: var(--baseline);
+  opacity: 0.6;
+  transition: opacity 100ms ease, background 100ms ease;
+}
+#panel-resizer:hover::after,
+body.is-resizing #panel-resizer::after {
+  opacity: 1;
+  background: var(--series-1);
+}
+body.is-resizing {
+  user-select: none;
+  cursor: col-resize;
+}
+
 .panel-tools {
   position: sticky;
   top: -8px;

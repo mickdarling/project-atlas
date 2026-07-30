@@ -1594,6 +1594,56 @@ function closePanel(force = false) {
   renderTreemap();
 }
 
+/* ------------------------------------------------------ panel resize *
+ * The panel's left edge is a grab handle. Width is view state — same
+ * tier as the pin — so it lives in localStorage and never touches
+ * verdicts. The map re-lays-out live as the stage narrows, rAF-throttled
+ * so a drag costs one render per frame at most.
+ * ------------------------------------------------------------------- */
+
+function clampPanelW(w) {
+  return Math.max(280, Math.min(Math.round(window.innerWidth * 0.7), Math.round(w)));
+}
+
+function wirePanelResize() {
+  const panel = $('#panel');
+  const grip = $('#panel-resizer');
+  if (!grip) return;
+
+  const saved = +localStorage.getItem('atlas-panel-w');
+  if (saved) panel.style.flexBasis = `${clampPanelW(saved)}px`;
+
+  let raf = null;
+  grip.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    // Capture so the drag survives the cursor leaving the 6px strip.
+    grip.setPointerCapture(e.pointerId);
+    document.body.classList.add('is-resizing');
+    const onMove = (ev) => {
+      panel.style.flexBasis = `${clampPanelW(window.innerWidth - ev.clientX)}px`;
+      if (!raf) raf = requestAnimationFrame(() => { raf = null; render(); });
+    };
+    const onUp = (ev) => {
+      grip.removeEventListener('pointermove', onMove);
+      grip.removeEventListener('pointerup', onUp);
+      document.body.classList.remove('is-resizing');
+      const w = clampPanelW(window.innerWidth - ev.clientX);
+      panel.style.flexBasis = `${w}px`;
+      localStorage.setItem('atlas-panel-w', String(w));
+      render();
+    };
+    grip.addEventListener('pointermove', onMove);
+    grip.addEventListener('pointerup', onUp);
+  });
+
+  // Double-click: back to the stylesheet default, forget the preference.
+  grip.addEventListener('dblclick', () => {
+    panel.style.flexBasis = '';
+    localStorage.removeItem('atlas-panel-w');
+    render();
+  });
+}
+
 function setPinned(on) {
   state.panelPinned = on;
   localStorage.setItem('atlas-pin', on ? '1' : '0');
@@ -2082,6 +2132,7 @@ function wireGlobal() {
 
   $('#panel-close').addEventListener('click', () => closePanel(true));
   $('#panel-pin').addEventListener('click', () => setPinned(!state.panelPinned));
+  wirePanelResize();
 
   const bind = (sel, key, transform = (v) => v) =>
     $(sel).addEventListener('input', (e) => {
