@@ -30,6 +30,29 @@ func httpJSON(_ path: String, method: String = "GET", body: [String: Any]? = nil
     }.resume()
 }
 
+// MARK: - Time helpers
+
+let isoFrac: ISO8601DateFormatter = {
+    let f = ISO8601DateFormatter()
+    f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    return f
+}()
+let isoPlain = ISO8601DateFormatter()
+
+func parseISO(_ s: String) -> Date? {
+    isoFrac.date(from: s) ?? isoPlain.date(from: s)
+}
+
+func agoString(_ d: Date) -> String {
+    let f = RelativeDateTimeFormatter()
+    f.unitsStyle = .short
+    return f.localizedString(for: d, relativeTo: Date())
+}
+
+// A scan runs daily; if the inventory is older than this, something is wrong
+// and the icon should say so without the panel being opened.
+let STALE_AFTER: TimeInterval = 24 * 3600
+
 func launchctl(_ args: [String]) {
     let p = Process()
     p.executableURL = URL(fileURLWithPath: "/bin/launchctl")
@@ -146,7 +169,7 @@ final class PanelController: NSViewController, NSMenuDelegate {
     let mapOnly = NSButton(checkboxWithTitle: "Map only (hide page controls)", target: nil, action: nil)
     let shareMode = NSButton(checkboxWithTitle: "Share mode (hide private names)", target: nil, action: nil)
     let openBtn = NSButton(title: "Open Dashboard", target: nil, action: nil)
-    let rescanBtn = NSButton(title: "Rescan Now", target: nil, action: nil)
+    let rescanBtn = NSButton(title: "Update Now", target: nil, action: nil)
     let serverBtn = NSButton(title: "Stop Server", target: nil, action: nil)
     let quitBtn = NSButton(title: "Quit", target: nil, action: nil)
     var serverUp = false
@@ -243,15 +266,18 @@ final class PanelController: NSViewController, NSMenuDelegate {
             if self.serverUp, let counts = status?["counts"] as? [String: Any] {
                 let total = counts["total"] as? Int ?? 0
                 let issues = counts["openIssues"] as? Int ?? 0
-                self.statusLabel.stringValue = scanning
-                    ? "Rescanning…"
-                    : "\(total) projects · \(issues) open issues"
+                var line = "\(total) projects · \(issues) open issues"
+                // The numbers mean nothing without "as of when".
+                if let gen = status?["generatedAt"] as? String, let d = parseISO(gen) {
+                    line += " · updated \(agoString(d))"
+                }
+                self.statusLabel.stringValue = scanning ? "Updating…" : line
             } else {
                 self.statusLabel.stringValue = self.serverUp ? "Server up — no inventory yet" : "Server not running"
             }
 
             self.rescanBtn.isEnabled = self.serverUp && !scanning
-            self.rescanBtn.title = scanning ? "Scanning…" : "Rescan Now"
+            self.rescanBtn.title = scanning ? "Updating…" : "Update Now"
             self.openBtn.isEnabled = self.serverUp
             self.mapOnly.isEnabled = self.serverUp
             self.serverBtn.title = self.serverUp ? "Stop Server" : "Start Server"
@@ -271,6 +297,10 @@ final class PanelController: NSViewController, NSMenuDelegate {
             self.mapOnly.state = (prefs["chrome"] as? String == "map") ? .on : .off
             self.shareMode.isEnabled = self.serverUp
             self.shareMode.state = (prefs["share"] as? String == "on") ? .on : .off
+
+            // While the panel is open it polls every 2 s — feed the icon from
+            // the same answers so it tracks a running scan in real time.
+            self.owner?.applyStatus(status)
         }
     }
 
@@ -309,7 +339,7 @@ final class PanelController: NSViewController, NSMenuDelegate {
 
     @objc func rescan() {
         rescanBtn.isEnabled = false
-        rescanBtn.title = "Scanning…"
+        rescanBtn.title = "Updating…"
         httpJSON("/api/scan", method: "POST", body: [:], timeout: 2.0)
     }
 
@@ -340,26 +370,74 @@ class AppDelegate: NSResponder, NSApplicationDelegate, NSPopoverDelegate {
     let panel = PanelController()
     var exitTimer: Timer?
     var refreshTimer: Timer?
+    var statusTimer: Timer?
     var suspendCount = 0
     var tracking: NSTrackingArea?
 
+    // What the icon says at a glance, panel closed. Fresh is the quiet
+    // default; every other state is the icon asking to be looked at.
+    enum IconState { case fresh, scanning, stale, down }
+    var iconState: IconState = .fresh
+
     func applicationDidFinishLaunching(_ n: Notification) {
         item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        if let img = NSImage(systemSymbolName: "square.grid.2x2",
-                             accessibilityDescription: "Project Atlas") {
-            img.isTemplate = true
-            item.button?.image = img
-        } else {
-            item.button?.title = "⊞"
-        }
         item.button?.target = self
         item.button?.action = #selector(togglePanel)
+        setIcon(.fresh)
 
         panel.owner = self
         popover.contentViewController = panel
         popover.behavior = .transient // click-away / Esc still close it
         popover.animates = false // snap open/closed; the fade reads as lag
         popover.delegate = self
+
+        // Slow background poll so the icon stays honest while the panel is
+        // closed. The panel's own 2 s refresh takes over while it is open.
+        statusTimer = Timer.scheduledTimer(withTimeInterval: 60.0, repeats: true) { [weak self] _ in
+            self?.pollStatus()
+        }
+        pollStatus()
+    }
+
+    func pollStatus() {
+        httpJSON("/api/status", timeout: 1.5) { [weak self] status in
+            self?.applyStatus(status)
+        }
+    }
+
+    func applyStatus(_ status: [String: Any]?) {
+        let next: IconState
+        if !(status?["up"] as? Bool ?? false) {
+            next = .down
+        } else if status?["scanning"] as? Bool ?? false {
+            next = .scanning
+        } else if let gen = status?["generatedAt"] as? String, let d = parseISO(gen) {
+            next = Date().timeIntervalSince(d) > STALE_AFTER ? .stale : .fresh
+        } else {
+            next = .stale // up, but no inventory has ever been written
+        }
+        if next != iconState { setIcon(next) }
+    }
+
+    func setIcon(_ s: IconState) {
+        iconState = s
+        guard let button = item.button else { return }
+        let (symbol, desc): (String, String)
+        switch s {
+        case .fresh: (symbol, desc) = ("square.grid.2x2", "Project Atlas")
+        case .scanning: (symbol, desc) = ("arrow.triangle.2.circlepath", "Project Atlas — updating now")
+        case .stale: (symbol, desc) = ("clock.badge.exclamationmark", "Project Atlas — data over a day old")
+        case .down: (symbol, desc) = ("square.grid.2x2", "Project Atlas — server not running")
+        }
+        if let img = NSImage(systemSymbolName: symbol, accessibilityDescription: desc) {
+            img.isTemplate = true
+            button.image = img
+        } else {
+            button.image = nil
+            button.title = "⊞"
+        }
+        button.appearsDisabled = (s == .down)
+        button.toolTip = desc
     }
 
     @objc func togglePanel() {
