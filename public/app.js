@@ -17,6 +17,10 @@ const state = {
   selectedKey: null,
   saveTimer: null,
   saving: false,
+  /* True from the moment an edit is scheduled until the save is CONFIRMED.
+   * The verdicts-changed listener checks it: merging disk over a keystroke
+   * still sitting in the debounce would silently clobber it. */
+  dirty: false,
   sortCol: 'commits',
   sortDir: -1,
   filters: {
@@ -1708,6 +1712,7 @@ function setVerdict(r, patch, reopen = true) {
 
 function scheduleSave() {
   clearTimeout(state.saveTimer);
+  state.dirty = true;
   $('#save-state').textContent = 'unsaved…';
   state.saveTimer = setTimeout(save, 400);
 }
@@ -1721,6 +1726,9 @@ async function save() {
       body: JSON.stringify(state.verdicts),
     });
     const json = await res.json();
+    // Only a CONFIRMED save clears dirty — a failed one means this page
+    // still holds truth the server doesn't, and no broadcast may overwrite it.
+    if (res.ok) state.dirty = false;
     $('#save-state').textContent = res.ok
       ? `saved · ${json.count} judged`
       : `save failed: ${json.error}`;
@@ -2445,6 +2453,27 @@ function connectEvents() {
         `${c.remoteOnly} not cloned · ${c.duplicateClones} duplicate clones · ` +
         `scanned ${fmtAgo(payload.inventory.generatedAt)}`;
       render();
+    } catch { /* server briefly away; next event will catch up */ }
+  });
+  /* Somebody else judged something — the MCP adapter, a second tab. Adopt
+   * it live, the same no-reload soft-merge scan-done uses. Our own echo
+   * lands here too: by then the save is confirmed and dirty is false, so
+   * the re-fetch is a harmless identity merge. */
+  es.addEventListener('verdicts-changed', async () => {
+    if (state.dirty || state.saving) return; // an unsaved edit outranks any broadcast
+    try {
+      const res = await fetch('/api/data');
+      if (!res.ok) return;
+      const payload = await res.json();
+      state.verdicts = migrateVerdicts(payload.verdicts || {}, state.repos);
+      $('#save-state').textContent = `${Object.keys(state.verdicts).length} judged`;
+      render();
+      // Refresh what's open — but never steal a cursor mid-sentence.
+      const ae = document.activeElement;
+      const typing = ae && $('#panel').contains(ae) &&
+        (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA');
+      if (state.selectedKey && !$('#panel').hidden && !typing) openPanel(state.selectedKey);
+      if (state.triage) renderTriage();
     } catch { /* server briefly away; next event will catch up */ }
   });
   // EventSource auto-reconnects; nothing to do on error.
