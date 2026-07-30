@@ -89,6 +89,18 @@ let SECTIONS: [(key: String, title: String, opts: [Opt])] = [
         Opt(value: "equal", label: "Equal",
             tip: "Every project gets the same tile. Pure census — size carries no meaning."),
     ]),
+    ("accent", "Accent by", [
+        Opt(value: "off", label: "Off",
+            tip: "No second channel — one variable per tile."),
+        Opt(value: "recency", label: "Recency of work",
+            tip: "A top-edge tab strip carrying a second validated ramp."),
+        Opt(value: "issues", label: "Open issues"),
+        Opt(value: "status", label: "Status"),
+        Opt(value: "priority", label: "Priority"),
+        Opt(value: "provenance", label: "Provenance"),
+        Opt(value: "research", label: "Research flag",
+            tip: "Tab on repos whose topics or tags say research / paper / results / findings."),
+    ]),
     ("__palette", "Palette", [
         Opt(value: "red:aqua", label: "Red → Aqua"),
         Opt(value: "red:green", label: "Red → Green"),

@@ -362,6 +362,14 @@ main#stage[hidden] { display: none; }
 /* Font sizes are set per-tile in JS so they scale with the box. Everything
    here is clipping discipline, so a long name can never spill into the row
    below it. */
+/* The second channel: a folder-tab strip along the tile's top edge. The
+   separator is what keeps two touching encodings from reading as one. */
+.tile-accent {
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  border-bottom: 1px solid var(--tile-ring);
+}
+
 .tile-name {
   font-weight: 600;
   line-height: 1.15;

@@ -223,5 +223,5 @@
     return (lum + 0.05) / 0.05 >= 1.05 / (lum + 0.05) ? '#0b0b0b' : '#ffffff';
   }
 
-  global.ATLAS_PALETTE = { ANCHORS, buildRamp, validateRamp, inkOn, contrast, oklch, STEPS };
+  global.ATLAS_PALETTE = { ANCHORS, buildRamp, validateRamp, inkOn, contrast, oklch, deltaE, STEPS };
 })(window);

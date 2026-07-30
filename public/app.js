@@ -30,6 +30,7 @@ const state = {
     visibility: 'visible',
     date: 'any',
     share: 'off',
+    accent: 'off',
   },
   panelPinned: false,
   triage: null,
@@ -327,6 +328,76 @@ function rampSteps(hue, toHue) {
 /** The ramp currently selected in the toolbar, both hues honoured. */
 function activeRamp() {
   return rampSteps(state.filters.hue, state.filters.hueTo);
+}
+
+/* ------------------------------------------------------ accent channel *
+ * A second, smaller visual channel per tile: a folder-tab strip along the
+ * top edge carrying its own validated ramp. It reads at small sizes and
+ * does not fight the fill — a 1px separator keeps tab and fill from
+ * blending, and the tab's hues are picked to avoid whatever pair the fill
+ * is using. Off by default: one variable is the right default; two is a
+ * choice you make.
+ * -------------------------------------------------------------------- */
+
+const ACCENT_PAIRS = [['yellow', 'violet'], ['orange', 'blue'], ['magenta', 'green']];
+
+/** The first accent pair that shares no hue with the fill's palette. */
+function accentHues() {
+  const used = new Set([state.filters.hue, state.filters.hueTo]);
+  for (const [a, b] of ACCENT_PAIRS) if (!used.has(a) && !used.has(b)) return [a, b];
+  return ACCENT_PAIRS[0];
+}
+
+function accentRamp() {
+  const [a, b] = accentHues();
+  return rampSteps(a, b);
+}
+
+/** Ordinal accents (status, priority) take one hue, like the fill does. */
+function accentOrdinalRamp() {
+  const [, b] = accentHues();
+  return rampSteps(b, b);
+}
+
+/* "Has findings" as a first-class visual state: a repo tagged or topic'd
+ * as research output gets the flag accent. */
+const RESEARCH_MARKERS = ['research', 'paper', 'results', 'findings'];
+
+function isResearchRepo(r) {
+  const hay = [...(r.topics || []), ...(verdict(r.key).tags || [])]
+    .map((s) => String(s).toLowerCase());
+  return hay.some((t) => RESEARCH_MARKERS.some((m) => t.includes(m)));
+}
+
+/** Tab colour for this repo, or null for "draw no tab" — at 3px, absence
+ *  reads better than a neutral swatch. */
+function accentColorFor(r) {
+  const a = state.filters.accent;
+  if (!a || a === 'off') return null;
+  const v = verdict(r.key);
+  switch (a) {
+    case 'status': {
+      const s = STATUSES.find((x) => x.id === v.status);
+      return s ? accentOrdinalRamp()[s.step] : null;
+    }
+    case 'priority': {
+      const step = { 3: 6, 2: 4, 1: 2 }[v.priority];
+      return step === undefined ? null : accentOrdinalRamp()[step];
+    }
+    case 'provenance':
+      return provenanceOf(r) === 'unknown' ? null : cssVar(provRec(r).varName);
+    case 'issues': {
+      const bin = issueBin(r.openIssues);
+      return bin === null ? null : accentRamp()[bin];
+    }
+    case 'research':
+      return isResearchRepo(r) ? cssVar('--series-2') : null;
+    case 'recency': {
+      const step = recencyStep(r);
+      return step === null ? null : accentRamp()[step];
+    }
+    default: return null;
+  }
 }
 
 /** Status and priority are ordinal: ONE hue stepped by intensity. Spreading
@@ -1064,12 +1135,18 @@ function buildTile(r, rect) {
     : `${num(byMine ? effortOf(r) : r.commits)}`;
   const subText = `${lead} · ${fmtAgo(r.lastActivity)}`;
 
+  /* The accent tab takes its slice off the top BEFORE text fitting, so a
+   * name never renders under the strip. Tiles too small for a legible tab
+   * skip it rather than shrink it into noise. */
+  const accentBg = accentColorFor(r);
+  const tabH = accentBg && h >= 16 && w >= 8 ? (h < 40 ? 3 : 4) : 0;
+
   /* Fit the real name to the real box. Padding shrinks first, because on a
    * small tile 5px of padding is most of the tile. */
   const padX = w < 26 ? 1 : w < 60 ? 3 : 5;
   const padY = h < 18 ? 1 : 3;
   const iw = w - padX * 2;
-  const ih = h - padY * 2;
+  const ih = h - padY * 2 - tabH;
   const showText = iw >= 6 && ih >= 5;
 
   const nameFit = showText
@@ -1091,7 +1168,7 @@ function buildTile(r, rect) {
 
   el.style.cssText =
     `left:${rect.x}px;top:${rect.y}px;width:${w}px;height:${h}px;` +
-    `padding:${padY}px ${padX}px;background:${bg};color:${ink}`;
+    `padding:${padY + tabH}px ${padX}px ${padY}px;background:${bg};color:${ink}`;
   el.dataset.key = r.key;
   el.tabIndex = 0;
   el.setAttribute('role', 'button');
@@ -1099,11 +1176,13 @@ function buildTile(r, rect) {
     `${name}, ${dispOrg(r.owner) || 'no owner'}, ${num(r.commits)} commits, last work ${fmtAgo(r.lastActivity)}` +
     (v.status ? `, marked ${v.status}` : '') + (vis !== 'visible' ? `, ${vis}` : ''));
 
-  el.innerHTML = showText
-    ? `<div class="tile-name" style="font-size:${nameFit.size}px;max-height:${nameMaxH.toFixed(1)}px">${escapeHTML(name)}</div>` +
-      (showSub ? `<div class="tile-sub" style="font-size:${subFit.size}px">${escapeHTML(subText)}</div>` : '') +
-      (flags && showFlags ? `<div class="tile-flags" title="${escapeHTML(describeFlags(flags).join('\n'))}" style="font-size:${Math.min(9, subFit.size)}px">${escapeHTML(flags)}</div>` : '')
-    : '';
+  el.innerHTML =
+    (tabH ? `<div class="tile-accent" style="height:${tabH}px;background:${accentBg}"></div>` : '') +
+    (showText
+      ? `<div class="tile-name" style="font-size:${nameFit.size}px;max-height:${nameMaxH.toFixed(1)}px">${escapeHTML(name)}</div>` +
+        (showSub ? `<div class="tile-sub" style="font-size:${subFit.size}px">${escapeHTML(subText)}</div>` : '') +
+        (flags && showFlags ? `<div class="tile-flags" title="${escapeHTML(describeFlags(flags).join('\n'))}" style="font-size:${Math.min(9, subFit.size)}px">${escapeHTML(flags)}</div>` : '')
+      : '');
 
   return el;
 }
@@ -1168,6 +1247,32 @@ function renderLegend() {
       [[6, 'High'], [4, 'Medium'], [2, 'Low']].map(([step, label]) =>
         `<span class="legend-item"><span class="legend-swatch" style="background:${ordinalRamp()[step]}"></span>${label}</span>`
       ).join('') + unsorted('Unset'));
+  }
+
+  // The second channel gets its own legend line — an unexplained tab is
+  // exactly the kind of silent encoding this app refuses to ship.
+  if (state.filters.accent && state.filters.accent !== 'off') {
+    const a = state.filters.accent;
+    const [ah, ab] = accentHues();
+    let sw;
+    if (a === 'provenance') {
+      sw = PROVENANCE.slice(0, 3).map((p) =>
+        `<span class="legend-item"><span class="legend-swatch" style="background:var(${p.varName})"></span>${p.glyph} ${p.label}</span>`).join('');
+    } else if (a === 'research') {
+      sw = `<span class="legend-item"><span class="legend-swatch" style="background:var(--series-2)"></span>topic or tag says research / paper / results / findings</span>`;
+    } else if (a === 'status') {
+      sw = STATUSES.map((s) =>
+        `<span class="legend-item"><span class="legend-swatch" style="background:${accentOrdinalRamp()[s.step]}"></span>${s.glyph}</span>`).join('');
+    } else if (a === 'priority') {
+      sw = [[6, 'High'], [4, 'Med'], [2, 'Low']].map(([st, l]) =>
+        `<span class="legend-item"><span class="legend-swatch" style="background:${accentOrdinalRamp()[st]}"></span>${l}</span>`).join('');
+    } else {
+      sw = ramp([0, 1, 2, 3, 4, 5, 6], ah, ab) +
+        `<span class="legend-note">${a === 'issues' ? 'none &rarr; 100 +' : 'oldest &rarr; newest'}</span>`;
+    }
+    const label = { recency: 'last work', issues: 'open issues', status: 'status',
+      priority: 'priority', provenance: 'provenance', research: 'research' }[a] || a;
+    parts.push(`<span class="legend-label">Top tab · ${label}</span>${sw}<span class="legend-note">no tab = unset</span>`);
   }
 
   const sizeLabel = {
@@ -1962,6 +2067,12 @@ function wireGlobal() {
     pushPrefs();
     render();
   });
+  $('#f-accent').addEventListener('input', (e) => {
+    state.filters.accent = e.target.value;
+    renderPaletteBadge(); // the badge now vouches for two ramps, not one
+    pushPrefs();
+    render();
+  });
   $('#f-size').addEventListener('input', syncMetricTooltips);
   $('#f-hue').addEventListener('input', (e) => setPalette(e.target.value, state.filters.hueTo));
   $('#f-hue-to').addEventListener('input', (e) => setPalette(state.filters.hue, e.target.value));
@@ -2115,18 +2226,45 @@ function renderPaletteBadge() {
   const failed = checks.filter((c) => !c.pass);
   const endsFail = failed.some((c) => c.name === 'Ends distinguishable');
 
-  badge.className = 'palette-badge ' + (ok ? 'ok' : endsFail ? 'bad' : 'warn');
-  badge.textContent = ok
-    ? '✓ colour-vision safe'
+  /* Two adjacent ramps interact, so with an accent on the badge vouches for
+   * BOTH: the accent ramp passes the same checks as the fill, and the two
+   * ramps' mid-tones stay apart under every colour-vision simulation — the
+   * comparison that decides whether the tab reads as its own channel or as
+   * a stripe of the fill. */
+  const aMode = state.filters.accent;
+  const accentRamped = aMode && !['off', 'provenance', 'research'].includes(aMode);
+  let accentNote = '';
+  let accentBad = false;
+  if (accentRamped) {
+    const aRamp = ['status', 'priority'].includes(aMode) ? accentOrdinalRamp() : accentRamp();
+    const av = window.ATLAS_PALETTE.validateRamp(aRamp, themeName());
+    let midD = Infinity, midKind = '';
+    for (const kind of ['protan', 'deutan', 'tritan']) {
+      const d = window.ATLAS_PALETTE.deltaE(ramp[3], aRamp[3], kind);
+      if (d < midD) { midD = d; midKind = kind; }
+    }
+    const midOk = midD >= 15;
+    accentBad = !av.ok || !midOk;
+    accentNote = `\n\nAccent tab (${accentHues().join('→')}): ` +
+      (av.ok ? 'ramp passes all checks. ' : `ramp fails ${av.checks.filter((c) => !c.pass).map((c) => c.name.toLowerCase()).join(', ')}. `) +
+      (midOk
+        ? `Fill vs tab mid-tones read ΔE ${midD.toFixed(1)} apart under ${midKind} — distinct channels.`
+        : `Fill vs tab mid-tones merge under ${midKind} (ΔE ${midD.toFixed(1)}) — pick a different fill palette.`);
+  }
+
+  const allOk = ok && !accentBad;
+  badge.className = 'palette-badge ' + (allOk ? 'ok' : endsFail ? 'bad' : 'warn');
+  badge.textContent = allOk
+    ? accentRamped ? '✓ both ramps safe' : '✓ colour-vision safe'
     : endsFail
       ? `✕ ends merge for ${endsKind}`
-      : `⚠ ${failed[0].name.toLowerCase()}`;
-  badge.title = ok
+      : ok ? '⚠ fill vs tab' : `⚠ ${failed[0].name.toLowerCase()}`;
+  badge.title = (ok
     ? `All checks pass in ${themeName()} mode.\n` + checks.map((c) => `✓ ${c.name}: ${c.detail}`).join('\n')
     : `Problems in ${themeName()} mode:\n` +
       failed.map((c) => `✕ ${c.name}: ${c.detail}`).join('\n') +
       (endsFail ? `\n\nThe two ends read as ΔE ${endsCVD.toFixed(1)} apart under ${endsKind} — ` +
-        'roughly one colour. Red→Blue reads the same way to everyone.' : '');
+        'roughly one colour. Red→Blue reads the same way to everyone.' : '')) + accentNote;
 }
 
 function setPalette(from, to) {
@@ -2189,7 +2327,7 @@ function migrateVerdicts(verdicts, repos) {
  * a state you are already in changes nothing and pushes nothing.
  * ------------------------------------------------------------------ */
 
-const PREF_KEYS = ['group', 'color', 'size', 'hue', 'hueTo', 'scale', 'visibility', 'date', 'share'];
+const PREF_KEYS = ['group', 'color', 'size', 'hue', 'hueTo', 'scale', 'visibility', 'date', 'share', 'accent'];
 
 function prefsSnapshot() {
   const p = { theme: themeName(), chrome: document.body.classList.contains('map-only') ? 'map' : 'full' };
@@ -2232,6 +2370,7 @@ function applyPrefs(p) {
   $('#f-size').value = state.filters.size;
   $('#f-visibility').value = state.filters.visibility;
   $('#f-date').value = state.filters.date;
+  $('#f-accent').value = state.filters.accent;
   $('#f-hue').value = state.filters.hue;
   $('#f-hue-to').value = state.filters.hueTo;
   $('#f-scale').value = state.filters.scale;
@@ -2338,6 +2477,7 @@ async function boot() {
       $('#f-size').value = state.filters.size;
       $('#f-visibility').value = state.filters.visibility;
       $('#f-date').value = state.filters.date;
+      $('#f-accent').value = state.filters.accent;
       $('#f-hue').value = state.filters.hue;
       $('#f-hue-to').value = state.filters.hueTo;
       $('#f-scale').value = state.filters.scale;
