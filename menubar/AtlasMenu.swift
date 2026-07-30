@@ -174,7 +174,9 @@ final class PanelController: NSViewController, NSMenuDelegate {
     let updateLabel = NSTextField(labelWithString: "")
     let updateBtn = NSButton(title: "Update App", target: nil, action: nil)
     var updateRow: NSGridRow?
-    let rescanBtn = NSButton(title: "Update Now", target: nil, action: nil)
+    // Vocabulary rule: "refresh" re-harvests CONTENT (repos, issues);
+    // "update" is reserved for the app's own code and nothing else.
+    let rescanBtn = NSButton(title: "Refresh Now", target: nil, action: nil)
     let serverBtn = NSButton(title: "Stop Server", target: nil, action: nil)
     let quitBtn = NSButton(title: "Quit", target: nil, action: nil)
     var serverUp = false
@@ -278,12 +280,12 @@ final class PanelController: NSViewController, NSMenuDelegate {
 
             // Mid-scan, say where it is, not just that it is running: the
             // scanner reports its phase and counts through /api/status.
-            var busy = "Updating…"
+            var busy = "Refreshing…"
             if scanning, let prog = status?["progress"] as? [String: Any],
                let phase = prog["phase"] as? String {
                 let done = prog["done"] as? Int ?? 0
                 let total = prog["total"] as? Int ?? 0
-                busy = total > 0 ? "Updating… \(phase) \(done)/\(total)" : "Updating… \(phase)"
+                busy = total > 0 ? "Refreshing… \(phase) \(done)/\(total)" : "Refreshing… \(phase)"
             }
 
             if self.serverUp, let counts = status?["counts"] as? [String: Any] {
@@ -302,7 +304,7 @@ final class PanelController: NSViewController, NSMenuDelegate {
             }
 
             self.rescanBtn.isEnabled = self.serverUp && !scanning
-            self.rescanBtn.title = scanning ? "Updating…" : "Update Now"
+            self.rescanBtn.title = scanning ? "Refreshing…" : "Refresh Now"
             self.openBtn.isEnabled = self.serverUp
             self.mapOnly.isEnabled = self.serverUp
             self.serverBtn.title = self.serverUp ? "Stop Server" : "Start Server"
@@ -393,8 +395,28 @@ final class PanelController: NSViewController, NSMenuDelegate {
     }
 
     @objc func rescan() {
+        // A refresh takes minutes and scales with repo and issue count. Say so
+        // once, up front, with the standard way out of ever seeing it again.
+        if !UserDefaults.standard.bool(forKey: "suppressRefreshWarning") {
+            let alert = NSAlert()
+            alert.messageText = "Refresh all project data?"
+            alert.informativeText =
+                "This re-harvests every local repo and asks GitHub about every org and repo. " +
+                "With a large portfolio — many repos, many open issues — it typically takes " +
+                "a couple of minutes. The status line here shows live progress while it runs."
+            alert.addButton(withTitle: "Refresh")
+            alert.addButton(withTitle: "Cancel")
+            alert.showsSuppressionButton = true
+            alert.suppressionButton?.title = "Don't show this again"
+            NSApp.activate(ignoringOtherApps: true)
+            let response = alert.runModal()
+            if alert.suppressionButton?.state == .on {
+                UserDefaults.standard.set(true, forKey: "suppressRefreshWarning")
+            }
+            guard response == .alertFirstButtonReturn else { return }
+        }
         rescanBtn.isEnabled = false
-        rescanBtn.title = "Updating…"
+        rescanBtn.title = "Refreshing…"
         httpJSON("/api/scan", method: "POST", body: [:], timeout: 2.0)
     }
 
@@ -480,7 +502,7 @@ class AppDelegate: NSResponder, NSApplicationDelegate, NSPopoverDelegate {
         let (symbol, desc): (String, String)
         switch s {
         case .fresh: (symbol, desc) = ("square.grid.2x2", "Project Atlas")
-        case .scanning: (symbol, desc) = ("arrow.triangle.2.circlepath", "Project Atlas — updating now")
+        case .scanning: (symbol, desc) = ("arrow.triangle.2.circlepath", "Project Atlas — refreshing now")
         case .stale: (symbol, desc) = ("clock.badge.exclamationmark", "Project Atlas — data over a day old")
         case .down: (symbol, desc) = ("square.grid.2x2", "Project Atlas — server not running")
         }

@@ -29,7 +29,9 @@ of any kind from the page.
   opens the dashboard.
 - **Menu bar app** (`AtlasMenu.app`, the ⊞ icon) — native Swift, compiled by the
   installer, no dependencies. Status at a glance **with its date** ("178 projects
-  · 2,813 open issues · updated 2 hr. ago"), **Open Dashboard**, **Update Now**,
+  · 2,813 open issues · updated 2 hr. ago"), **Open Dashboard**, **Refresh Now**
+  (re-harvest — the word "update" is reserved for the app's own code; the first
+  click warns that a refresh takes minutes, with a don't-show-again checkbox),
   **Stop/Start Server**, and the full view configuration: Group By, Color By,
   Accent By, Area, Palette, Scale, Worked On, Showing, Theme — plus **Map Only**
   and **Share Mode**. The icon itself reports state without opening the panel:
@@ -48,9 +50,9 @@ guard — applying a state you're already in does nothing.
 
 **Map Only** is the payoff: configuration lives in the menu bar, so the page can
 be nothing but the map on a big screen. A faint floating `⚙ controls` button is
-the way back from the page itself. Rescans triggered from the menu (or the 07:00
-agent) soft-refresh every open page when they finish — new facts, same view
-state, no reload.
+the way back from the page itself. Refreshes triggered from the menu (or the
+07:00 agent) soft-reload every open page's data when they finish — new facts,
+same view state, no page reload.
 
 ### Updating the app
 
