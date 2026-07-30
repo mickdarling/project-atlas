@@ -54,6 +54,7 @@ let SECTIONS: [(key: String, title: String, opts: [Opt])] = [
         Opt(value: "presence", label: "Local vs remote"),
         Opt(value: "language", label: "Language"),
         Opt(value: "visibility", label: "Hidden / ignored"),
+        Opt(value: "duplicates", label: "Duplicate clusters"),
         Opt(value: "none", label: "Nothing (one big map)"),
     ]),
     ("color", "Color by", [

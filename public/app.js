@@ -549,6 +549,11 @@ function groupOf(r) {
       return 'Untriaged · cold for a year +';
     }
     case 'presence': return PRESENCE_LABEL[r.presence] || r.presence;
+    // A review view for the ⧉ clusters: each repo with more than one working
+    // copy becomes its own group, everything clean parks in one block. Focus
+    // a cluster, judge its copies, move to the next — all 13 in one sitting.
+    case 'duplicates':
+      return r.clonesOfSlug > 1 ? `⧉ ${r.slug}` : 'No duplicate copies';
     case 'language': return r.language || 'No language detected';
     case 'visibility': {
       const x = VISIBILITY.find((y) => y.id === visibilityOf(r));
@@ -1215,10 +1220,7 @@ function openPanel(key) {
       (${escapeHTML(fmtAgo(r.lastActivity))}), where it was
       ${escapeHTML(fmtDate(v.seenLastCommit))} when you judged it.</div>` : ''}
 
-    ${r.duplicateOf ? `<div class="dup-note">⧉ <strong>This is a second working copy.</strong>
-      ${r.clonesOfSlug} folders on this machine point at <code>${escapeHTML(r.slug)}</code>.
-      Issue and PR counts are attributed to the copy with the most history, so they
-      show as — here. A good candidate to hide.</div>` : ''}
+    ${r.clonesOfSlug > 1 ? renderCloneCluster(r) : ''}
 
     <div class="panel-section">
       <h3>Status</h3>
@@ -1319,6 +1321,48 @@ function openPanel(key) {
   renderTreemapSelection();
 }
 
+/* The ⧉ cluster, laid out to be ACTED on: every working copy of this slug,
+ * which one carries the stats, and one-click filing for the rest. Deleting
+ * folders stays a human act in Finder — the tool flags and files, never rms. */
+const BACKUPISH = /backup|archive|-old(?:[-./]|$)|\bcopy\b/i;
+
+function renderCloneCluster(r) {
+  const clones = state.repos
+    .filter((x) => x.slug === r.slug && x.path)
+    .sort((a, b) => (b.isPrimaryClone - a.isPrimaryClone) || (b.commits || 0) - (a.commits || 0));
+  if (clones.length < 2) return '';
+
+  const rows = clones.map((c) => {
+    const cv = verdict(c.key);
+    const cvis = visibilityOf(c);
+    const badges = [
+      c.isPrimaryClone ? '<span class="dup-badge dup-primary">primary — carries the stats</span>' : '',
+      c.key === r.key ? '<span class="dup-badge">viewing</span>' : '',
+      BACKUPISH.test(c.path) ? '<span class="dup-badge dup-backup">looks like a backup</span>' : '',
+      cvis !== 'visible' ? `<span class="dup-badge">${cvis}${cv.hiddenReason ? ` — ${escapeHTML(cv.hiddenReason)}` : ''}</span>` : '',
+    ].filter(Boolean).join(' ');
+    const actions = [
+      !c.isPrimaryClone && cvis === 'visible'
+        ? `<button type="button" data-dup-hide="${escapeHTML(c.key)}">Hide as duplicate</button>` : '',
+      !c.isPrimaryClone && cvis !== 'visible'
+        ? `<button type="button" data-dup-unhide="${escapeHTML(c.key)}">Unhide</button>` : '',
+      c.absPath ? `<button type="button" data-dup-reveal="${escapeHTML(c.absPath)}">Reveal in Finder</button>` : '',
+    ].filter(Boolean).join(' ');
+    return `<div class="dup-clone">
+      <div class="dup-path"><code>${escapeHTML(c.path)}</code> ${badges}</div>
+      <div class="dup-meta">${num(c.commits)} commits · last work ${escapeHTML(fmtAgo(c.lastActivity))}
+        <span class="dup-actions">${actions}</span></div>
+    </div>`;
+  }).join('');
+
+  return `<div class="dup-note">⧉ <strong>${clones.length} working copies of
+    <code>${escapeHTML(r.slug)}</code> on this machine.</strong>
+    Issue and PR counts are attributed to the primary copy; the others show — .
+    Hiding files a copy away with the reason “duplicate” — reversible any time
+    via Showing → Only hidden.
+    ${rows}</div>`;
+}
+
 function renderTreemapSelection() {
   document.querySelectorAll('.tile.is-selected').forEach((t) => t.classList.remove('is-selected'));
   const el = document.querySelector(`.tile[data-key="${CSS.escape(state.selectedKey || '')}"]`);
@@ -1395,6 +1439,34 @@ function wirePanel(r) {
 
   const note = body.querySelector('#note-input');
   if (note) note.addEventListener('change', () => setVerdict(r, { note: note.value }, false));
+
+  // Cluster actions act on the SIBLING clone, then re-open this panel so the
+  // list reflects what just happened.
+  body.querySelectorAll('[data-dup-hide]').forEach((b) => {
+    b.addEventListener('click', () => {
+      const c = state.repos.find((x) => x.key === b.dataset.dupHide);
+      if (!c) return;
+      setVerdict(c, { visibility: 'hidden', hiddenReason: verdict(c.key).hiddenReason || 'duplicate' }, false);
+      openPanel(r.key);
+    });
+  });
+  body.querySelectorAll('[data-dup-unhide]').forEach((b) => {
+    b.addEventListener('click', () => {
+      const c = state.repos.find((x) => x.key === b.dataset.dupUnhide);
+      if (!c) return;
+      setVerdict(c, { visibility: 'visible' }, false);
+      openPanel(r.key);
+    });
+  });
+  body.querySelectorAll('[data-dup-reveal]').forEach((b) => {
+    b.addEventListener('click', () => {
+      fetch('/api/open', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ absPath: b.dataset.dupReveal }),
+      });
+    });
+  });
 
   const reveal = body.querySelector('#btn-reveal');
   if (reveal) {

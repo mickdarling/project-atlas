@@ -583,6 +583,37 @@ main#stage[hidden] { display: none; }
 }
 .dup-note strong { color: var(--text-primary); }
 
+.dup-clone {
+  margin-top: 8px;
+  padding-top: 7px;
+  border-top: 1px solid var(--gridline);
+}
+.dup-path code { word-break: break-all; }
+.dup-meta {
+  margin-top: 3px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+}
+.dup-actions { display: inline-flex; gap: 5px; margin-left: auto; }
+.dup-actions button {
+  font: inherit; font-size: 11px;
+  color: var(--text-secondary); background: var(--surface-1);
+  border: 1px solid var(--border); border-radius: 5px;
+  padding: 2px 7px; cursor: pointer;
+}
+.dup-actions button:hover { color: var(--text-primary); border-color: var(--baseline); }
+.dup-badge {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 20px;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.dup-badge.dup-primary { border-color: var(--series-1); color: var(--text-secondary); }
+.dup-badge.dup-backup { border-color: var(--warning); color: var(--text-secondary); }
+
 #table-view {
   flex: 1 1 auto;
   min-height: 0;
