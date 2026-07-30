@@ -132,6 +132,7 @@ final class PanelController: NSViewController, NSMenuDelegate {
     let statusLabel = NSTextField(labelWithString: "…")
     var popups: [String: NSPopUpButton] = [:]
     let mapOnly = NSButton(checkboxWithTitle: "Map only (hide page controls)", target: nil, action: nil)
+    let shareMode = NSButton(checkboxWithTitle: "Share mode (hide private names)", target: nil, action: nil)
     let openBtn = NSButton(title: "Open Dashboard", target: nil, action: nil)
     let rescanBtn = NSButton(title: "Rescan Now", target: nil, action: nil)
     let serverBtn = NSButton(title: "Stop Server", target: nil, action: nil)
@@ -153,12 +154,15 @@ final class PanelController: NSViewController, NSMenuDelegate {
         serverBtn.target = self; serverBtn.action = #selector(toggleServer)
         quitBtn.target = self; quitBtn.action = #selector(quitApp)
         mapOnly.target = self; mapOnly.action = #selector(mapOnlyChanged)
+        shareMode.target = self; shareMode.action = #selector(shareModeChanged)
+        shareMode.toolTip = "Keep the shape, hide the identities: private repo and org names become stable pseudonyms; paths, descriptions, notes and tags are hidden. Numbers stay."
         for b in [openBtn, rescanBtn, serverBtn, quitBtn] {
             b.bezelStyle = .rounded
             b.controlSize = .small
             b.font = .systemFont(ofSize: 11)
         }
         mapOnly.font = .systemFont(ofSize: 12)
+        shareMode.font = .systemFont(ofSize: 12)
 
         let actions = NSStackView(views: [openBtn, rescanBtn])
         actions.spacing = 6
@@ -191,6 +195,7 @@ final class PanelController: NSViewController, NSMenuDelegate {
 
         addSeparator(grid)
         grid.addRow(with: [NSGridCell.emptyContentView, mapOnly])
+        grid.addRow(with: [NSGridCell.emptyContentView, shareMode])
         let lifecycle = NSStackView(views: [serverBtn, quitBtn])
         lifecycle.spacing = 6
         grid.addRow(with: [NSGridCell.emptyContentView, lifecycle])
@@ -252,6 +257,8 @@ final class PanelController: NSViewController, NSMenuDelegate {
                 }
             }
             self.mapOnly.state = (prefs["chrome"] as? String == "map") ? .on : .off
+            self.shareMode.isEnabled = self.serverUp
+            self.shareMode.state = (prefs["share"] as? String == "on") ? .on : .off
         }
     }
 
@@ -276,6 +283,11 @@ final class PanelController: NSViewController, NSMenuDelegate {
     @objc func mapOnlyChanged() {
         httpJSON("/api/prefs", method: "POST",
                  body: ["chrome": mapOnly.state == .on ? "map" : "full"])
+    }
+
+    @objc func shareModeChanged() {
+        httpJSON("/api/prefs", method: "POST",
+                 body: ["share": shareMode.state == .on ? "on" : "off"])
     }
 
     @objc func openDashboard() {

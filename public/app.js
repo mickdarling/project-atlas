@@ -29,6 +29,7 @@ const state = {
     size: 'sqrt-work',
     visibility: 'visible',
     date: 'any',
+    share: 'off',
   },
   panelPinned: false,
   triage: null,
@@ -227,6 +228,77 @@ const COMMON_TAGS = [
   'superseded', 'experiment', 'client work', 'archived upstream', 'reference only',
   'needs cleanup', 'no longer runs', 'merged elsewhere', 'personal',
 ];
+
+/* --------------------------------------------------------- share mode *
+ * The map is worth showing people — the shape of 178 projects, what's
+ * alive, where the effort goes — but tile names, orgs, paths and
+ * descriptions reveal private work. Share mode keeps the picture and
+ * drops the identities. Numbers stay: they are the point of sharing.
+ *
+ * Pseudonyms are STABLE: derived by hashing the repo's key (or org's
+ * name), not by position, so the same repo reads consistently across
+ * screenshots, sessions, and rescans. Public repos keep their real
+ * names — they are on GitHub for anyone to see anyway — and an org
+ * keeps its name if any of its repos is public, for the same reason.
+ * ------------------------------------------------------------------- */
+
+function shareOn() {
+  return state.filters.share === 'on';
+}
+
+/** Public means CONFIRMED public. Unknown (never harvested) stays masked. */
+function isPublicRepo(r) {
+  return r.isPrivate === false;
+}
+
+function fnv(s) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return h >>> 0;
+}
+
+const repoAlias = (r) => `project-${fnv('n:' + r.key).toString(36).slice(0, 4)}`;
+const orgAlias = (name) => `org-${fnv('o:' + name).toString(36).slice(0, 3)}`;
+
+function orgHasPublic(name) {
+  return state.repos.some((x) => (x.group || 'Unaffiliated') === name && isPublicRepo(x));
+}
+
+function dispName(r) {
+  return !shareOn() || isPublicRepo(r) ? r.name : repoAlias(r);
+}
+
+function dispOrg(name) {
+  if (!shareOn() || !name || name === 'Unaffiliated') return name;
+  return orgHasPublic(name) ? name : orgAlias(name);
+}
+
+/** The identity line under a name. Private repos get silence, not a fake path. */
+function dispSlug(r) {
+  if (!shareOn()) return r.slug || r.path || '';
+  return isPublicRepo(r) ? (r.slug || '') : '';
+}
+
+function dispDesc(r) {
+  return shareOn() && !isPublicRepo(r) ? '' : (r.description || '');
+}
+
+/** Group headers, dock chips and the focus chip all pass through here.
+ *  Only owner and duplicate-cluster groupings carry identifying names. */
+function dispGroup(name) {
+  if (!shareOn()) return name;
+  const mode = state.filters.group;
+  if (mode === 'owner') return dispOrg(name);
+  if (mode === 'duplicates' && name.startsWith('⧉ ')) {
+    const slug = name.slice(2);
+    const rep = state.repos.find((x) => x.slug === slug);
+    return rep && isPublicRepo(rep) ? name : `⧉ cluster-${fnv('c:' + slug).toString(36).slice(0, 3)}`;
+  }
+  return name;
+}
 
 /* ------------------------------------------------------------ helpers */
 
@@ -766,8 +838,9 @@ function renderTreemap() {
      * together — the count is part of the header, not a bonus, so it shrinks
      * with the name rather than being dropped at an arbitrary threshold. */
     const gName = g.node.name;
+    const gDisp = dispGroup(gName);
     const gCount = String(g.node.repos.length);
-    const head = fitHeader(gName, gCount, gw, gh);
+    const head = fitHeader(gDisp, gCount, gw, gh);
     const { size: headSize, headH, padPx, gapPx, showCount } = head;
 
     const headEl = document.createElement('div');
@@ -778,11 +851,11 @@ function renderTreemap() {
     headEl.style.cssText =
       `height:${headH}px;font-size:${headSize}px;padding:0 ${padPx}px;gap:${gapPx}px`;
     headEl.innerHTML =
-      `<span class="group-name">${escapeHTML(gName)}</span>` +
+      `<span class="group-name">${escapeHTML(gDisp)}</span>` +
       (showCount ? `<span class="group-count">${gCount}</span>` : '');
     headEl.title = focus.has(gName)
-      ? `${gName} — ${g.node.repos.length} projects. Click to minimize it to the dock.`
-      : `${gName} — ${g.node.repos.length} projects. Click to focus; the rest minimize to the dock.`;
+      ? `${gDisp} — ${g.node.repos.length} projects. Click to minimize it to the dock.`
+      : `${gDisp} — ${g.node.repos.length} projects. Click to focus; the rest minimize to the dock.`;
     box.appendChild(headEl);
 
     const pad = headSize < 8 ? 2 : GROUP_PAD;
@@ -885,7 +958,7 @@ function renderDock(parked) {
       .slice()
       .sort((a, b) => b.repos.length - a.repos.length)
       .map((g) => `<button type="button" class="dock-chip" data-group="${escapeHTML(g.name)}"
-        title="Bring ${escapeHTML(g.name)} back into focus">${escapeHTML(g.name)}
+        title="Bring ${escapeHTML(dispGroup(g.name))} back into focus">${escapeHTML(dispGroup(g.name))}
         <span class="group-count">${g.repos.length}</span></button>`)
       .join('');
 }
@@ -897,7 +970,7 @@ function renderFocusChip(shown, total, applied = true) {
   if (!s.size || !applied) { el.hidden = true; return; }
   el.hidden = false;
   el.innerHTML =
-    `<span>Focused on ${shown} of ${total}: ${escapeHTML([...s].join(', '))}</span>` +
+    `<span>Focused on ${shown} of ${total}: ${escapeHTML([...s].map(dispGroup).join(', '))}</span>` +
     `<button type="button" id="focus-clear" aria-label="Show all groups">show all</button>`;
   el.querySelector('#focus-clear').addEventListener('click', (e) => {
     e.stopPropagation();
@@ -914,8 +987,8 @@ function renderUndrawnNote() {
   if (!n) { el.hidden = true; return; }
   el.hidden = false;
   el.textContent = `${n} too small to draw — ${state.undrawn
-    .slice(0, 3).map((r) => r.name).join(', ')}${n > 3 ? '…' : ''}`;
-  el.title = state.undrawn.map((r) => r.name).join('\n');
+    .slice(0, 3).map(dispName).join(', ')}${n > 3 ? '…' : ''}`;
+  el.title = state.undrawn.map(dispName).join('\n');
 }
 
 /**
@@ -962,6 +1035,7 @@ function buildTile(r, rect) {
 
   const v = verdict(r.key);
   const { bg, ink } = colorFor(r);
+  const name = dispName(r);
 
   const vis = visibilityOf(r);
   const el = document.createElement('div');
@@ -999,7 +1073,7 @@ function buildTile(r, rect) {
   const showText = iw >= 6 && ih >= 5;
 
   const nameFit = showText
-    ? fitText(r.name, iw, ih, { min: 4, max: 13, weight: 600, maxLines: ih > 26 ? 3 : 2 })
+    ? fitText(name, iw, ih, { min: 4, max: 13, weight: 600, maxLines: ih > 26 ? 3 : 2 })
     : { size: 4, lines: 1, fits: false };
 
   const nameH = nameFit.lines * nameFit.size * 1.15;
@@ -1022,11 +1096,11 @@ function buildTile(r, rect) {
   el.tabIndex = 0;
   el.setAttribute('role', 'button');
   el.setAttribute('aria-label',
-    `${r.name}, ${r.owner || 'no owner'}, ${num(r.commits)} commits, last work ${fmtAgo(r.lastActivity)}` +
+    `${name}, ${dispOrg(r.owner) || 'no owner'}, ${num(r.commits)} commits, last work ${fmtAgo(r.lastActivity)}` +
     (v.status ? `, marked ${v.status}` : '') + (vis !== 'visible' ? `, ${vis}` : ''));
 
   el.innerHTML = showText
-    ? `<div class="tile-name" style="font-size:${nameFit.size}px;max-height:${nameMaxH.toFixed(1)}px">${escapeHTML(r.name)}</div>` +
+    ? `<div class="tile-name" style="font-size:${nameFit.size}px;max-height:${nameMaxH.toFixed(1)}px">${escapeHTML(name)}</div>` +
       (showSub ? `<div class="tile-sub" style="font-size:${subFit.size}px">${escapeHTML(subText)}</div>` : '') +
       (flags && showFlags ? `<div class="tile-flags" title="${escapeHTML(describeFlags(flags).join('\n'))}" style="font-size:${Math.min(9, subFit.size)}px">${escapeHTML(flags)}</div>` : '')
     : '';
@@ -1157,8 +1231,8 @@ function renderTable() {
     const p = provRec(r);
     const x = VISIBILITY.find((y) => y.id === visibilityOf(r));
     return `<tr data-key="${escapeHTML(r.key)}">
-      <td>${escapeHTML(r.name)}${r.duplicateOf ? ' <span class="muted">⧉ copy</span>' : ''}</td>
-      <td>${escapeHTML(r.owner || '—')}</td>
+      <td>${escapeHTML(dispName(r))}${r.duplicateOf ? ' <span class="muted">⧉ copy</span>' : ''}</td>
+      <td>${escapeHTML(dispOrg(r.owner) || '—')}</td>
       <td>${p.glyph} ${escapeHTML(p.label)}${v.provenance ? ' ✎' : ''}</td>
       <td>${escapeHTML(PRESENCE_LABEL[r.presence] || r.presence)}</td>
       <td class="num">${num(r.commits)}</td>
@@ -1167,8 +1241,8 @@ function renderTable() {
       <td class="num">${num(r.openPRs)}</td>
       <td>${s ? `${s.glyph} ${escapeHTML(s.label)}` : '—'}</td>
       <td>${escapeHTML(PRIORITY_LABEL[v.priority || 0])}</td>
-      <td>${x.glyph} ${escapeHTML(x.label)}${v.hiddenReason ? ` <span class="muted">— ${escapeHTML(v.hiddenReason)}</span>` : ''}</td>
-      <td>${escapeHTML((v.tags || []).join(', ') || '—')}</td>
+      <td>${x.glyph} ${escapeHTML(x.label)}${v.hiddenReason && !shareOn() ? ` <span class="muted">— ${escapeHTML(v.hiddenReason)}</span>` : ''}</td>
+      <td>${shareOn() ? '—' : escapeHTML((v.tags || []).join(', ') || '—')}</td>
     </tr>`;
   }).join('');
 }
@@ -1200,10 +1274,12 @@ function openPanel(key) {
   const p = provRec(r);
 
   $('#panel-body').innerHTML = `
-    <h2>${escapeHTML(r.name)}</h2>
-    <div class="panel-org">${escapeHTML(r.slug || r.path || '')} · ${p.glyph} ${escapeHTML(p.label)}
-      · ${escapeHTML(PRESENCE_LABEL[r.presence] || r.presence)}${r.isArchived ? ' · archived' : ''}</div>
-    ${r.description ? `<p class="panel-desc">${escapeHTML(r.description)}</p>` : ''}
+    <h2>${escapeHTML(dispName(r))}</h2>
+    <div class="panel-org">${[dispSlug(r), `${p.glyph} ${p.label}`,
+        PRESENCE_LABEL[r.presence] || r.presence, r.isArchived ? 'archived' : '']
+      .filter(Boolean).map(escapeHTML).join(' · ')}</div>
+    ${shareOn() ? '<div class="share-note">Share mode — names, paths, notes and descriptions of private work are hidden. Numbers stay.</div>' : ''}
+    ${dispDesc(r) ? `<p class="panel-desc">${escapeHTML(dispDesc(r))}</p>` : ''}
 
     <div class="stat-row">
       <div class="stat"><div class="stat-label">Commits (all refs)</div>
@@ -1221,7 +1297,7 @@ function openPanel(key) {
       (${escapeHTML(fmtAgo(r.lastActivity))}), where it was
       ${escapeHTML(fmtDate(v.seenLastCommit))} when you judged it.</div>` : ''}
 
-    ${r.clonesOfSlug > 1 ? renderCloneCluster(r) : ''}
+    ${r.clonesOfSlug > 1 && !shareOn() ? renderCloneCluster(r) : ''}
 
     <div class="panel-section">
       <h3>Status</h3>
@@ -1249,7 +1325,7 @@ function openPanel(key) {
       <p class="seg-help">Hidden is “off my screen for now”. Ignored is “not my project,
       stop counting it”. Both stay reachable — set <em>Showing</em> in the toolbar to
       <em>Only hidden + ignored</em>, or sort the table by this column.</p>
-      ${visibilityOf(r) !== 'visible' ? `<div style="margin-top:7px">
+      ${visibilityOf(r) !== 'visible' && !shareOn() ? `<div style="margin-top:7px">
         <input type="text" id="hide-reason" placeholder="Why? (searchable)"
                value="${escapeHTML(v.hiddenReason || '')}" list="tag-suggestions">
       </div>` : ''}
@@ -1270,7 +1346,7 @@ function openPanel(key) {
       </label>
     </div>
 
-    <div class="panel-section">
+    ${shareOn() ? '' : `<div class="panel-section">
       <h3>Tags</h3>
       <div class="tag-list" id="tag-list">
         ${(v.tags || []).map((t) => `<span class="tag">${escapeHTML(t)}
@@ -1284,18 +1360,18 @@ function openPanel(key) {
     <div class="panel-section">
       <h3>Note</h3>
       <textarea id="note-input" placeholder="What is this, why does it matter, what's next…">${escapeHTML(v.note || '')}</textarea>
-    </div>
+    </div>`}
 
     <div class="panel-links">
-      ${r.url ? `<a href="${escapeHTML(r.url)}" target="_blank" rel="noopener">GitHub ↗</a>` : ''}
-      ${r.absPath ? `<button type="button" id="btn-reveal">Reveal in Finder</button>` : ''}
+      ${r.url && (!shareOn() || isPublicRepo(r)) ? `<a href="${escapeHTML(r.url)}" target="_blank" rel="noopener">GitHub ↗</a>` : ''}
+      ${r.absPath && !shareOn() ? `<button type="button" id="btn-reveal">Reveal in Finder</button>` : ''}
     </div>
 
     <div class="panel-section">
       <h3>Facts</h3>
       <dl class="kv">
-        <dt>Path</dt><dd>${escapeHTML(r.path || '— not cloned —')}</dd>
-        <dt>Branch</dt><dd>${escapeHTML(r.branch || '—')}</dd>
+        ${shareOn() ? '' : `<dt>Path</dt><dd>${escapeHTML(r.path || '— not cloned —')}</dd>
+        <dt>Branch</dt><dd>${escapeHTML(r.branch || '—')}</dd>`}
         <dt>On this branch</dt><dd>${num(r.commitsHead)}</dd>
         <dt>Local branches</dt><dd>${num(r.localBranches)}</dd>
         <dt>On GitHub default</dt><dd>${num(r.remoteCommits)}</dd>
@@ -1309,7 +1385,7 @@ function openPanel(key) {
         <dt>Contributors</dt><dd>${num(r.contributors)}</dd>
         <dt>Language</dt><dd>${escapeHTML(r.language || '—')}</dd>
         <dt>Stars</dt><dd>${num(r.stars)}</dd>
-        ${r.forkOf ? `<dt>Fork of</dt><dd>${escapeHTML(r.forkOf)}</dd>` : ''}
+        ${r.forkOf && (!shareOn() || isPublicRepo(r)) ? `<dt>Fork of</dt><dd>${escapeHTML(r.forkOf)}</dd>` : ''}
       </dl>
     </div>
   `;
@@ -1684,18 +1760,19 @@ function renderTriage() {
     return c && (c.group || 'Unaffiliated') === groupName &&
       !verdict(k).status && visibilityOf(c) === 'visible';
   }).length;
-  const authors = (r.topAuthors || []).slice(0, 3)
+  const authors = shareOn() ? '' : (r.topAuthors || []).slice(0, 3)
     .map((a) => `${a.name} (${num(a.commits)})`).join(', ');
+  const gLabel = dispOrg(groupName) || groupName;
 
   host.innerHTML = `<div class="triage-card">
     <div class="triage-progress">
       <span>${escapeHTML(progress)}</span>
       <button type="button" id="triage-exit" title="Leave triage — Esc">× exit</button>
     </div>
-    <h2>${escapeHTML(r.name)}</h2>
-    <div class="triage-org">${escapeHTML(r.slug || r.path || '')} · ${escapeHTML(groupName)}
-      · ${p.glyph} ${escapeHTML(p.label)}</div>
-    ${r.description ? `<p class="triage-desc">${escapeHTML(r.description)}</p>` : ''}
+    <h2>${escapeHTML(dispName(r))}</h2>
+    <div class="triage-org">${[dispSlug(r), gLabel, `${p.glyph} ${p.label}`]
+      .filter(Boolean).map(escapeHTML).join(' · ')}</div>
+    ${dispDesc(r) ? `<p class="triage-desc">${escapeHTML(dispDesc(r))}</p>` : ''}
     <dl class="triage-facts">
       <dt>Last work</dt><dd>${escapeHTML(fmtAgo(r.lastActivity))}</dd>
       <dt>Your commits</dt><dd>${num(effortOf(r))}${r.myChurn ? ` · ${num(r.myChurn)} lines` : ''}</dd>
@@ -1716,8 +1793,8 @@ function renderTriage() {
       <button type="button" id="triage-hide" title="Off my screen for now">◌ Hide <kbd>h</kbd></button>
       <button type="button" id="triage-ignore" title="Not my project, stop counting it">⊘ Ignore <kbd>i</kbd></button>
       ${remainingInGroup > 1 ? `<button type="button" id="triage-batch" class="triage-danger"
-        title="Mark every remaining untriaged project in ${escapeHTML(groupName)} as dead — undoable with z">
-        ✕ Rest of ${escapeHTML(groupName)} is dead (${remainingInGroup})</button>` : ''}
+        title="Mark every remaining untriaged project in ${escapeHTML(gLabel)} as dead — undoable with z">
+        ✕ Rest of ${escapeHTML(gLabel)} is dead (${remainingInGroup})</button>` : ''}
     </div>
   </div>`;
 
@@ -1740,7 +1817,7 @@ function renderTriage() {
         setTimeout(() => {
           if (document.contains(batch)) {
             delete batch.dataset.armed;
-            batch.textContent = `✕ Rest of ${groupName} is dead (${remainingInGroup})`;
+            batch.textContent = `✕ Rest of ${gLabel} is dead (${remainingInGroup})`;
           }
         }, 4000);
       } else {
@@ -1759,15 +1836,15 @@ function showTooltip(r, ev) {
   const s = STATUSES.find((x) => x.id === v.status);
   const vis = visibilityOf(r);
   tip().innerHTML =
-    `<div class="tt-name">${escapeHTML(r.name)}</div>` +
-    `<div class="muted">${escapeHTML(r.slug || r.path || '')}</div>` +
+    `<div class="tt-name">${escapeHTML(dispName(r))}</div>` +
+    `<div class="muted">${escapeHTML(dispSlug(r))}</div>` +
     `<dl>
       <dt>Commits</dt><dd>${num(r.commits)}</dd>
       <dt>Last work</dt><dd>${escapeHTML(fmtAgo(r.lastActivity))}</dd>
       <dt>Open</dt><dd>${num(r.openIssues)} issues · ${num(r.openPRs)} PRs</dd>
       <dt>Where</dt><dd>${escapeHTML(PRESENCE_LABEL[r.presence] || r.presence)}</dd>
       ${s ? `<dt>Status</dt><dd>${s.glyph} ${escapeHTML(s.label)}</dd>` : ''}
-      ${vis !== 'visible' ? `<dt>Showing</dt><dd>${escapeHTML(vis)}${v.hiddenReason ? ` — ${escapeHTML(v.hiddenReason)}` : ''}</dd>` : ''}
+      ${vis !== 'visible' ? `<dt>Showing</dt><dd>${escapeHTML(vis)}${v.hiddenReason && !shareOn() ? ` — ${escapeHTML(v.hiddenReason)}` : ''}</dd>` : ''}
       ${v.priority ? `<dt>Priority</dt><dd>${escapeHTML(PRIORITY_LABEL[v.priority])}</dd>` : ''}
       ${r.dirtyFiles ? `<dt>Uncommitted</dt><dd>${num(r.dirtyFiles)} files</dd>` : ''}
       ${r.unpushedCommits ? `<dt>Unpushed</dt><dd>${num(r.unpushedCommits)} commits</dd>` : ''}
@@ -1939,6 +2016,16 @@ function wireGlobal() {
     render();
   });
 
+  $('#btn-share').addEventListener('click', () => {
+    state.filters.share = shareOn() ? 'off' : 'on';
+    syncShareButton();
+    pushPrefs();
+    render();
+    // Open surfaces are rebuilt so nothing identifying lingers on screen.
+    if (state.selectedKey) openPanel(state.selectedKey);
+    if (state.triage) renderTriage();
+  });
+
   $('#btn-export').addEventListener('click', () => {
     const blob = new Blob([JSON.stringify(state.verdicts, null, 2)], { type: 'application/json' });
     const a = document.createElement('a');
@@ -2002,6 +2089,10 @@ function wireGlobal() {
 }
 
 /* --------------------------------------------------------------- boot */
+
+function syncShareButton() {
+  $('#btn-share').setAttribute('aria-pressed', String(shareOn()));
+}
 
 /** The palette picker only drives the single-variable encodings. */
 function syncHueControl() {
@@ -2098,7 +2189,7 @@ function migrateVerdicts(verdicts, repos) {
  * a state you are already in changes nothing and pushes nothing.
  * ------------------------------------------------------------------ */
 
-const PREF_KEYS = ['group', 'color', 'size', 'hue', 'hueTo', 'scale', 'visibility', 'date'];
+const PREF_KEYS = ['group', 'color', 'size', 'hue', 'hueTo', 'scale', 'visibility', 'date', 'share'];
 
 function prefsSnapshot() {
   const p = { theme: themeName(), chrome: document.body.classList.contains('map-only') ? 'map' : 'full' };
@@ -2144,8 +2235,13 @@ function applyPrefs(p) {
   $('#f-hue').value = state.filters.hue;
   $('#f-hue-to').value = state.filters.hueTo;
   $('#f-scale').value = state.filters.scale;
+  syncShareButton();
   syncHueControl();
   render();
+  // Open surfaces are rebuilt so a share-mode flip from the menu bar leaves
+  // nothing identifying on screen.
+  if (state.selectedKey) openPanel(state.selectedKey);
+  if (state.triage) renderTriage();
 }
 
 /** Map-only: strip the page to the treemap. The menu bar (or the floating
@@ -2247,6 +2343,7 @@ async function boot() {
       $('#f-scale').value = state.filters.scale;
     } catch { /* no prefs yet */ }
   }
+  syncShareButton();
   syncHueControl();
 
   const c = payload.inventory.counts;
