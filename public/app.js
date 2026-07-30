@@ -222,11 +222,30 @@ const FLAG_DEFS = {
   '✕': 'status: dead',
 };
 
-function describeFlags(flagsStr) {
-  return flagsStr
-    .split(' ')
-    .filter(Boolean)
-    .map((g) => `${g} ${FLAG_DEFS[g] || ''}`.trim());
+/**
+ * Every glyph on this tile's corner as a [glyph, fact] row for the main
+ * tooltip — ONE hover carries everything, so the corner glyphs need no
+ * second mouse-over of their own. Counts specialize the generic FLAG_DEFS
+ * meaning where the number is known.
+ */
+function flagRows(r) {
+  const v = verdict(r.key);
+  const vis = visibilityOf(r);
+  const rows = [];
+  const s = STATUSES.find((x) => x.id === v.status);
+  if (s) rows.push([s.glyph, `status: ${s.label.toLowerCase()}`]);
+  if (v.priority) rows.push([['', '▁', '▄', '█'][v.priority], `priority: ${PRIORITY_LABEL[v.priority].toLowerCase()}`]);
+  if (vis !== 'visible') {
+    const x = VISIBILITY.find((y) => y.id === vis);
+    rows.push([x.glyph, `${vis}${v.hiddenReason && !shareOn() ? ` — ${v.hiddenReason}` : ''}`]);
+  }
+  if (r.dirtyFiles) rows.push(['✱', `${num(r.dirtyFiles)} uncommitted files sitting on disk`]);
+  if (r.unpushedCommits) rows.push(['↑', `${num(r.unpushedCommits)} commits not pushed to any remote`]);
+  if (r.duplicateOf) rows.push(['⧉', FLAG_DEFS['⧉']]);
+  if (r.isArchived) rows.push(['▤', FLAG_DEFS['▤']]);
+  if (v.provenance) rows.push(['✎', FLAG_DEFS['✎']]);
+  if (isStale(r)) rows.push(['⚠', 'new work since you judged it']);
+  return rows;
 }
 
 const COMMON_TAGS = [
@@ -1188,7 +1207,7 @@ function buildTile(r, rect) {
     (showText
       ? `<div class="tile-name" style="font-size:${nameFit.size}px;max-height:${nameMaxH.toFixed(1)}px">${escapeHTML(name)}</div>` +
         (showSub ? `<div class="tile-sub" style="font-size:${subFit.size}px">${escapeHTML(subText)}</div>` : '') +
-        (flags && showFlags ? `<div class="tile-flags" title="${escapeHTML(describeFlags(flags).join('\n'))}" style="font-size:${Math.min(9, subFit.size)}px">${escapeHTML(flags)}</div>` : '')
+        (flags && showFlags ? `<div class="tile-flags" style="font-size:${Math.min(9, subFit.size)}px">${escapeHTML(flags)}</div>` : '')
       : '');
 
   return el;
@@ -1960,9 +1979,8 @@ function renderTriage() {
 const tip = () => $('#tooltip');
 
 function showTooltip(r, ev) {
-  const v = verdict(r.key);
-  const s = STATUSES.find((x) => x.id === v.status);
-  const vis = visibilityOf(r);
+  // ONE hover carries everything: the facts up top, then every corner glyph
+  // as its own icon-led row. The glyphs themselves have no second tooltip.
   tip().innerHTML =
     `<div class="tt-name">${escapeHTML(dispName(r))}</div>` +
     `<div class="muted">${escapeHTML(dispSlug(r))}</div>` +
@@ -1971,16 +1989,12 @@ function showTooltip(r, ev) {
       <dt>Last work</dt><dd>${escapeHTML(fmtAgo(r.lastActivity))}</dd>
       <dt>Open</dt><dd>${num(r.openIssues)} issues · ${num(r.openPRs)} PRs</dd>
       <dt>Where</dt><dd>${escapeHTML(PRESENCE_LABEL[r.presence] || r.presence)}</dd>
-      ${s ? `<dt>Status</dt><dd>${s.glyph} ${escapeHTML(s.label)}</dd>` : ''}
-      ${vis !== 'visible' ? `<dt>Showing</dt><dd>${escapeHTML(vis)}${v.hiddenReason && !shareOn() ? ` — ${escapeHTML(v.hiddenReason)}` : ''}</dd>` : ''}
-      ${v.priority ? `<dt>Priority</dt><dd>${escapeHTML(PRIORITY_LABEL[v.priority])}</dd>` : ''}
-      ${r.dirtyFiles ? `<dt>Uncommitted</dt><dd>${num(r.dirtyFiles)} files</dd>` : ''}
-      ${r.unpushedCommits ? `<dt>Unpushed</dt><dd>${num(r.unpushedCommits)} commits</dd>` : ''}
-      ${r.duplicateOf ? `<dt>⧉</dt><dd>duplicate of another clone</dd>` : ''}
-      ${r.isArchived ? `<dt>▤</dt><dd>archived on GitHub</dd>` : ''}
-      ${v.provenance ? `<dt>✎</dt><dd>provenance set by hand</dd>` : ''}
-      ${isStale(r) ? `<dt>⚠</dt><dd>new work since you judged it</dd>` : ''}
-    </dl>`;
+    </dl>` +
+    (flagRows(r).length
+      ? `<dl class="tt-flags">${flagRows(r)
+          .map(([g, fact]) => `<dt>${escapeHTML(g)}</dt><dd>${escapeHTML(fact)}</dd>`)
+          .join('')}</dl>`
+      : '');
   tip().hidden = false;
   moveTooltip(ev);
 }

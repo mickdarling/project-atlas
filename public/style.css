@@ -425,6 +425,13 @@ main#stage[hidden] { display: none; }
 #tooltip dl { display: grid; grid-template-columns: auto 1fr; gap: 1px 10px; margin: 4px 0 0; }
 #tooltip dt { color: var(--text-muted); }
 #tooltip dd { margin: 0; font-variant-numeric: tabular-nums; }
+/* The corner glyphs, explained in place — the icon leads its own row. */
+#tooltip .tt-flags {
+  margin-top: 6px;
+  padding-top: 5px;
+  border-top: 1px solid var(--gridline);
+}
+#tooltip .tt-flags dt { color: var(--text-primary); text-align: center; min-width: 14px; }
 
 /* -------------------------------------------------------------- panel */
 
