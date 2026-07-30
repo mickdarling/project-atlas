@@ -2399,21 +2399,23 @@ function connectEvents() {
   es.addEventListener('prefs', (e) => {
     try { applyPrefs(JSON.parse(e.data)); } catch { /* malformed event */ }
   });
+  // Vocabulary rule: a "refresh" re-harvests content; "update" is reserved
+  // for the app's own code.
   es.addEventListener('scan-start', () => {
-    $('#scan-stamp').textContent = 'rescanning…';
+    $('#scan-stamp').textContent = 'refreshing…';
   });
-  // A scan takes minutes — say where it is, not just that it is.
+  // A refresh takes minutes — say where it is, not just that it is.
   es.addEventListener('scan-progress', (e) => {
     try {
       const p = JSON.parse(e.data);
       $('#scan-stamp').textContent =
-        `rescanning… ${p.phase}${p.total ? ` ${p.done}/${p.total}` : ''}`;
+        `refreshing… ${p.phase}${p.total ? ` ${p.done}/${p.total}` : ''}`;
     } catch { /* malformed event */ }
   });
   es.addEventListener('scan-done', async (e) => {
     let ok = true;
     try { ok = JSON.parse(e.data).ok; } catch { /* assume ok */ }
-    if (!ok) { $('#scan-stamp').textContent = 'scan failed — see ~/Library/Logs/project-atlas/scan.log'; return; }
+    if (!ok) { $('#scan-stamp').textContent = 'refresh failed — see ~/Library/Logs/project-atlas/scan.log'; return; }
     // Soft refresh: new facts, same page state, verdicts re-merged.
     try {
       const res = await fetch('/api/data');
