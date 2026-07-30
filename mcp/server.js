@@ -750,13 +750,26 @@ rl.on('line', async (line) => {
   if (method === 'ping') return reply(id, {});
   if (method === 'tools/list') return reply(id, { tools: toolList() });
   if (method === 'tools/call') {
-    const result = await handleToolCall(params && params.name, params && params.arguments);
-    return reply(id, {
-      content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
-      isError: !result.success,
-    });
+    inFlight++;
+    try {
+      const result = await handleToolCall(params && params.name, params && params.arguments);
+      return reply(id, {
+        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        isError: !result.success,
+      });
+    } finally {
+      inFlight--;
+    }
   }
   if (id !== undefined && id !== null) replyError(id, -32601, `Method not found: ${method}`);
 });
 
-rl.on('close', () => process.exit(0));
+/* stdin closing means no MORE requests, not that pending ones stopped
+ * mattering — exiting immediately would swallow any tools/call still
+ * waiting on the Atlas server. Drain first, then go. */
+let inFlight = 0;
+rl.on('close', () => {
+  const drain = setInterval(() => {
+    if (inFlight === 0) { clearInterval(drain); process.exit(0); }
+  }, 20);
+});

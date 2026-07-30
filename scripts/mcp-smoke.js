@@ -189,6 +189,26 @@ function get(pathname) {
   const unknown = await call('mcp_aql_read', { operation: 'no_such_op', params: {} });
   if (unknown.success || unknown.error.code !== 'UNKNOWN_OPERATION') fail('unknown operation not rejected');
 
+  // Regression: closing stdin right after a request must not swallow the
+  // in-flight answer — the server drains before exiting.
+  const short = spawn(process.execPath, [path.join(ROOT, 'mcp', 'server.js')], {
+    env: { ...process.env, ATLAS_PORT: String(PORT) },
+    stdio: ['pipe', 'pipe', 'inherit'],
+  });
+  let shortOut = '';
+  short.stdout.on('data', (c) => { shortOut += c; });
+  short.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call',
+    params: { name: 'mcp_aql_read', arguments: { operation: 'get_counts', params: {} } } }) + '\n');
+  short.stdin.end();
+  await new Promise((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error('drain-on-close: server never answered after stdin closed')), 8000);
+    short.on('exit', () => { clearTimeout(t); resolve(); });
+  });
+  const answered = shortOut.split('\n').filter(Boolean).map((l) => {
+    try { return JSON.parse(l); } catch { return null; }
+  }).some((m) => m && m.id === 1 && m.result && m.result.isError === false);
+  if (!answered) fail('drain-on-close: in-flight request was swallowed');
+
   process.stdout.write('mcp smoke ok\n');
   shutdown(0);
 })().catch((err) => fail(err.message));
