@@ -222,6 +222,10 @@ function isDirectory(p) {
   try { return fs.statSync(p).isDirectory(); } catch { return false; }
 }
 
+function localProjectKey(local) {
+  return local.projectKey || `local:${local.path}`;
+}
+
 /* ------------------------------------------------------------------ *
  * 3. Remote URL -> owner/name
  * ------------------------------------------------------------------ */
@@ -499,7 +503,12 @@ function main() {
     slugToLocals.get(s).push(l);
   }
   for (const list of slugToLocals.values()) {
-    list.sort((a, b) => b.commits - a.commits || a.path.localeCompare(b.path));
+    // Worktree representatives can change as checkout paths come and go. The
+    // collapsed project key is derived from the common Git dir and is the
+    // stable tie-breaker for deciding which independent clone is primary.
+    list.sort((a, b) =>
+      b.commits - a.commits || localProjectKey(a).localeCompare(localProjectKey(b))
+    );
   }
   const claimedSlugs = new Set([...slugToLocals.keys()].map((s) => s.toLowerCase()));
 
@@ -530,13 +539,13 @@ function main() {
 
     const owner = (g && g.owner) || (l.remote && l.remote.owner) || null;
 
-    const key = l.projectKey || `local:${l.path}`;
+    const key = localProjectKey(l);
     merged.set(key, {
       key,
       slug,
       clonesOfSlug: siblings.length,
       isPrimaryClone: isPrimary,
-      duplicateOf: isPrimary ? null : (siblings[0].projectKey || `local:${siblings[0].path}`),
+      duplicateOf: isPrimary ? null : localProjectKey(siblings[0]),
       name: (g && g.name) || (l.remote && l.remote.name) || l.dirName,
       dirName: l.dirName,
       owner,
@@ -659,8 +668,7 @@ function main() {
   // Who is committing to repos you own that isn't recognised as you?
   const unmatchedTally = new Map();
   for (const l of locals) {
-    const rec = merged.get(l.remote && l.remote.host.includes('github.com')
-      ? `gh:${l.remote.slug}` : `local:${l.path}`);
+    const rec = merged.get(localProjectKey(l));
     if (!rec || rec.provenance !== 'mine') continue;
     for (const a of l.authors) {
       if (isMyAuthor(a)) continue;
