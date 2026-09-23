@@ -14,6 +14,8 @@ const fs = require('fs');
 const path = require('path');
 
 const ROOT = process.env.ATLAS_ROOT || path.join(process.env.HOME, 'Developer');
+let ROOT_CANONICAL = ROOT;
+try { ROOT_CANONICAL = fs.realpathSync(ROOT); } catch { /* scan reports an empty root below */ }
 // ATLAS_DATA keeps scanner tests hermetic and mirrors server.js. Production
 // scans continue to use the repo-local data directory.
 const DATA_DIR = process.env.ATLAS_DATA || path.join(__dirname, 'data');
@@ -88,6 +90,7 @@ const GIT_PROBE = `
 cd "$1" 2>/dev/null || exit 0
 export GIT_PAGER=cat
 echo "head=$(git rev-parse HEAD 2>/dev/null)"
+echo "gitDir=$(git rev-parse --path-format=absolute --git-dir 2>/dev/null)"
 echo "commonDir=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"
 # --all counts every ref this clone knows about. Counting HEAD alone reports
 # whatever branch happens to be checked out, which is not a property of the project.
@@ -180,6 +183,20 @@ function collapseLinkedWorktrees(discovered) {
     });
 
     const representative = group[0];
+    const commonDir = representative.commonDir;
+    const hasLinkedWorktree = group.some((local) =>
+      local.gitDir && local.commonDir && local.gitDir !== local.commonDir
+    );
+    let projectKey = `local:${representative.path}`;
+    if (hasLinkedWorktree && commonDir) {
+      // A normal repository's common dir is <checkout>/.git, even when that
+      // checkout sits outside ATLAS_ROOT. Deriving the key from it keeps saved
+      // verdicts attached when the visible worktree set changes. Bare repos do
+      // not have a containing checkout, so their common dir is the identity.
+      projectKey = path.basename(commonDir) === '.git'
+        ? `local:${path.relative(ROOT_CANONICAL, path.dirname(commonDir))}`
+        : `local-gitdir:${path.relative(ROOT_CANONICAL, commonDir)}`;
+    }
     const worktrees = group.map((local) => ({
       path: local.path,
       absPath: local.absPath,
@@ -191,6 +208,7 @@ function collapseLinkedWorktrees(discovered) {
 
     collapsed.push({
       ...representative,
+      projectKey,
       worktreeCount: worktrees.length,
       worktrees,
       // Dirty changes live in each checkout rather than the shared Git dir.
@@ -386,6 +404,7 @@ function main() {
       path: path.relative(ROOT, dir),
       absPath: dir,
       dirName: path.basename(dir),
+      gitDir: kv.gitDir || null,
       commonDir: kv.commonDir || null,
       remoteUrl: kv.origin || null,
       remote,
@@ -511,13 +530,13 @@ function main() {
 
     const owner = (g && g.owner) || (l.remote && l.remote.owner) || null;
 
-    const key = `local:${l.path}`;
+    const key = l.projectKey || `local:${l.path}`;
     merged.set(key, {
       key,
       slug,
       clonesOfSlug: siblings.length,
       isPrimaryClone: isPrimary,
-      duplicateOf: isPrimary ? null : `local:${siblings[0].path}`,
+      duplicateOf: isPrimary ? null : (siblings[0].projectKey || `local:${siblings[0].path}`),
       name: (g && g.name) || (l.remote && l.remote.name) || l.dirName,
       dirName: l.dirName,
       owner,
