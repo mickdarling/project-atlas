@@ -14,7 +14,11 @@ const fs = require('fs');
 const path = require('path');
 
 const ROOT = process.env.ATLAS_ROOT || path.join(process.env.HOME, 'Developer');
-const DATA_DIR = path.join(__dirname, 'data');
+let ROOT_CANONICAL = ROOT;
+try { ROOT_CANONICAL = fs.realpathSync(ROOT); } catch { /* scan reports an empty root below */ }
+// ATLAS_DATA keeps scanner tests hermetic and mirrors server.js. Production
+// scans continue to use the repo-local data directory.
+const DATA_DIR = process.env.ATLAS_DATA || path.join(__dirname, 'data');
 const OUT = path.join(DATA_DIR, 'inventory.json');
 const IDENTITY = path.join(DATA_DIR, 'identity.json');
 
@@ -86,6 +90,8 @@ const GIT_PROBE = `
 cd "$1" 2>/dev/null || exit 0
 export GIT_PAGER=cat
 echo "head=$(git rev-parse HEAD 2>/dev/null)"
+echo "gitDir=$(git rev-parse --path-format=absolute --git-dir 2>/dev/null)"
+echo "commonDir=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"
 # --all counts every ref this clone knows about. Counting HEAD alone reports
 # whatever branch happens to be checked out, which is not a property of the project.
 echo "commits=$(git rev-list --count --all 2>/dev/null)"
@@ -153,6 +159,71 @@ function probeRepo(dir) {
   }
 
   return { kv, authors, churnByEmail };
+}
+
+/* Linked worktrees are branches of one local clone, not additional projects.
+ * They share a common Git directory (object database, refs, and remotes), while
+ * genuinely independent clones have different common directories even when
+ * they point at the same GitHub slug. Keep one representative per common dir
+ * and retain the worktree-specific state for inspection in the detail panel. */
+function collapseLinkedWorktrees(discovered) {
+  const byCommonDir = new Map();
+  for (const local of discovered) {
+    const identity = local.commonDir || `path:${local.absPath}`;
+    if (!byCommonDir.has(identity)) byCommonDir.set(identity, []);
+    byCommonDir.get(identity).push(local);
+  }
+
+  const collapsed = [];
+  for (const group of byCommonDir.values()) {
+    group.sort((a, b) => {
+      const aMain = isDirectory(path.join(a.absPath, '.git'));
+      const bMain = isDirectory(path.join(b.absPath, '.git'));
+      return (bMain - aMain) || a.path.localeCompare(b.path);
+    });
+
+    const representative = group[0];
+    const commonDir = representative.commonDir;
+    const hasLinkedWorktree = group.some((local) =>
+      local.gitDir && local.commonDir && local.gitDir !== local.commonDir
+    );
+    let projectKey = `local:${representative.path}`;
+    if (hasLinkedWorktree && commonDir) {
+      // A normal repository's common dir is <checkout>/.git, even when that
+      // checkout sits outside ATLAS_ROOT. Deriving the key from it keeps saved
+      // verdicts attached when the visible worktree set changes. Bare repos do
+      // not have a containing checkout, so their common dir is the identity.
+      projectKey = path.basename(commonDir) === '.git'
+        ? `local:${path.relative(ROOT_CANONICAL, path.dirname(commonDir))}`
+        : `local-gitdir:${path.relative(ROOT_CANONICAL, commonDir)}`;
+    }
+    const worktrees = group.map((local) => ({
+      path: local.path,
+      absPath: local.absPath,
+      branch: local.branch,
+      head: local.head,
+      commitsHead: local.commitsHead,
+      dirtyFiles: local.dirtyFiles,
+    }));
+
+    collapsed.push({
+      ...representative,
+      projectKey,
+      worktreeCount: worktrees.length,
+      worktrees,
+      // Dirty changes live in each checkout rather than the shared Git dir.
+      dirtyFiles: worktrees.reduce((sum, wt) => sum + wt.dirtyFiles, 0),
+    });
+  }
+  return collapsed;
+}
+
+function isDirectory(p) {
+  try { return fs.statSync(p).isDirectory(); } catch { return false; }
+}
+
+function localProjectKey(local) {
+  return local.projectKey || `local:${local.path}`;
 }
 
 /* ------------------------------------------------------------------ *
@@ -323,7 +394,7 @@ function main() {
   const dirs = findRepos(ROOT, 0, []);
   log(`  found ${dirs.length} local git repos`);
 
-  const locals = [];
+  const discoveredLocals = [];
   let done = 0;
   for (const dir of dirs) {
     reportProgress('probing local repos', done, dirs.length);
@@ -333,10 +404,12 @@ function main() {
     if (!probed) continue;
     const { kv, authors, churnByEmail } = probed;
     const remote = parseRemote(kv.origin);
-    locals.push({
+    discoveredLocals.push({
       path: path.relative(ROOT, dir),
       absPath: dir,
       dirName: path.basename(dir),
+      gitDir: kv.gitDir || null,
+      commonDir: kv.commonDir || null,
       remoteUrl: kv.origin || null,
       remote,
       head: kv.head || null,
@@ -355,6 +428,11 @@ function main() {
       authors,
       churnByEmail,
     });
+  }
+  const locals = collapseLinkedWorktrees(discoveredLocals);
+  const linkedWorktrees = discoveredLocals.length - locals.length;
+  if (linkedWorktrees) {
+    log(`  collapsed ${linkedWorktrees} linked worktree${linkedWorktrees === 1 ? '' : 's'} into their primary checkouts`);
   }
 
   // Identity: whose commits count as "mine".
@@ -425,7 +503,12 @@ function main() {
     slugToLocals.get(s).push(l);
   }
   for (const list of slugToLocals.values()) {
-    list.sort((a, b) => b.commits - a.commits || a.path.localeCompare(b.path));
+    // Worktree representatives can change as checkout paths come and go. The
+    // collapsed project key is derived from the common Git dir and is the
+    // stable tie-breaker for deciding which independent clone is primary.
+    list.sort((a, b) =>
+      b.commits - a.commits || localProjectKey(a).localeCompare(localProjectKey(b))
+    );
   }
   const claimedSlugs = new Set([...slugToLocals.keys()].map((s) => s.toLowerCase()));
 
@@ -456,13 +539,13 @@ function main() {
 
     const owner = (g && g.owner) || (l.remote && l.remote.owner) || null;
 
-    const key = `local:${l.path}`;
+    const key = localProjectKey(l);
     merged.set(key, {
       key,
       slug,
       clonesOfSlug: siblings.length,
       isPrimaryClone: isPrimary,
-      duplicateOf: isPrimary ? null : `local:${siblings[0].path}`,
+      duplicateOf: isPrimary ? null : localProjectKey(siblings[0]),
       name: (g && g.name) || (l.remote && l.remote.name) || l.dirName,
       dirName: l.dirName,
       owner,
@@ -515,6 +598,8 @@ function main() {
       language: g ? g.language : null,
       topics: g ? g.topics : [],
       diskKB: g ? g.diskKB : null,
+      worktreeCount: l.worktreeCount || 1,
+      worktrees: l.worktrees || [],
     });
   }
 
@@ -573,6 +658,8 @@ function main() {
       language: g.language,
       topics: g.topics,
       diskKB: g.diskKB,
+      worktreeCount: 0,
+      worktrees: [],
     });
   }
 
@@ -581,8 +668,7 @@ function main() {
   // Who is committing to repos you own that isn't recognised as you?
   const unmatchedTally = new Map();
   for (const l of locals) {
-    const rec = merged.get(l.remote && l.remote.host.includes('github.com')
-      ? `gh:${l.remote.slug}` : `local:${l.path}`);
+    const rec = merged.get(localProjectKey(l));
     if (!rec || rec.provenance !== 'mine') continue;
     for (const a of l.authors) {
       if (isMyAuthor(a)) continue;
@@ -619,6 +705,7 @@ function main() {
           localOnly: repos.filter((r) => r.presence === 'local-only').length,
           remoteOnly: repos.filter((r) => r.presence === 'remote-only').length,
           duplicateClones: repos.filter((r) => r.duplicateOf).length,
+          linkedWorktrees,
           openIssues: repos.reduce((s, r) => s + (r.openIssues || 0), 0),
           openPRs: repos.reduce((s, r) => s + (r.openPRs || 0), 0),
         },

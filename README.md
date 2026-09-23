@@ -204,8 +204,14 @@ surprising figure can be traced.
 
 ### Duplicate working copies
 
-Several folders can hold clones of one GitHub repo — backups, review checkouts,
-archived snapshots. Nine slugs here do; `DollhouseMCP/mcp-server` has four.
+Atlas distinguishes linked Git worktrees from genuinely separate clones. Linked
+worktrees share one common Git directory, so Atlas collapses them into one project
+tile and lists every checkout, branch, and dirty-file count in that tile's detail
+panel. This keeps task worktrees from multiplying the project and duplicate counts.
+
+Several folders can still hold independent clones of one GitHub repo — backups,
+review checkouts, archived snapshots. Nine slugs here do;
+`DollhouseMCP/mcp-server` has four.
 
 Each gets its own tile, keyed by **path**, because a slug is not unique. The clone
 with the most history is primary and carries the GitHub metadata; the rest are
