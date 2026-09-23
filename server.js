@@ -267,7 +267,10 @@ const server = http.createServer(async (req, res) => {
     try {
       const { absPath } = JSON.parse(await readBody(req));
       const inventory = readJSON(INVENTORY, null);
-      const known = inventory && inventory.repos.some((r) => r.absPath && r.absPath === absPath);
+      const known = inventory && inventory.repos.some((r) =>
+        (r.absPath && r.absPath === absPath) ||
+        (Array.isArray(r.worktrees) && r.worktrees.some((wt) => wt.absPath === absPath))
+      );
       if (!known) return send(res, 400, JSON.stringify({ error: 'unknown path' }));
       execFile('open', ['-R', absPath], () => {});
       return send(res, 200, JSON.stringify({ ok: true }));

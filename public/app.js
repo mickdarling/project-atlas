@@ -1429,6 +1429,7 @@ function openPanel(key) {
       ${escapeHTML(fmtDate(v.seenLastCommit))} when you judged it.</div>` : ''}
 
     ${r.clonesOfSlug > 1 && !shareOn() ? renderCloneCluster(r) : ''}
+    ${r.worktreeCount > 1 && !shareOn() ? renderWorktreeCluster(r) : ''}
 
     <div class="panel-section">
       <h3>Status</h3>
@@ -1514,6 +1515,7 @@ function openPanel(key) {
         <dt>Branch</dt><dd>${escapeHTML(r.branch || '—')}</dd>`}
         <dt>On this branch</dt><dd>${num(r.commitsHead)}</dd>
         <dt>Local branches</dt><dd>${num(r.localBranches)}</dd>
+        <dt>Working trees</dt><dd>${num(r.worktreeCount || (r.path ? 1 : 0))}</dd>
         <dt>On GitHub default</dt><dd>${num(r.remoteCommits)}</dd>
         <dt>First commit</dt><dd>${escapeHTML(fmtDate(r.firstCommitDate))}</dd>
         <dt>Last commit</dt><dd>${escapeHTML(fmtDate(r.lastCommitDate))}</dd>
@@ -1577,6 +1579,31 @@ function renderCloneCluster(r) {
     Issue and PR counts are attributed to the primary copy; the others show — .
     Hiding files a copy away with the reason “duplicate” — reversible any time
     via Showing → Only hidden.
+    ${rows}</div>`;
+}
+
+/* Linked worktrees share one Git object database and therefore one tile. The
+ * paths still matter operationally, so keep them visible from that tile. */
+function renderWorktreeCluster(r) {
+  const worktrees = Array.isArray(r.worktrees) ? r.worktrees : [];
+  if (worktrees.length < 2) return '';
+
+  const rows = worktrees.map((wt) => {
+    const main = wt.path === r.path
+      ? '<span class="dup-badge dup-primary">primary checkout</span>' : '';
+    const dirty = wt.dirtyFiles
+      ? `<span class="dup-badge">${num(wt.dirtyFiles)} uncommitted</span>` : '';
+    const reveal = wt.absPath
+      ? `<button type="button" data-worktree-reveal="${escapeHTML(wt.absPath)}">Reveal in Finder</button>` : '';
+    return `<div class="dup-clone">
+      <div class="dup-path"><code>${escapeHTML(wt.path)}</code> ${main} ${dirty}</div>
+      <div class="dup-meta">${escapeHTML(wt.branch || 'detached')} · ${num(wt.commitsHead)} commits
+        <span class="dup-actions">${reveal}</span></div>
+    </div>`;
+  }).join('');
+
+  return `<div class="dup-note"><strong>${worktrees.length} Git working trees.</strong>
+    They share repository history and are represented by this single project tile.
     ${rows}</div>`;
 }
 
@@ -1734,6 +1761,15 @@ function wirePanel(r) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ absPath: b.dataset.dupReveal }),
+      });
+    });
+  });
+  body.querySelectorAll('[data-worktree-reveal]').forEach((b) => {
+    b.addEventListener('click', () => {
+      fetch('/api/open', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ absPath: b.dataset.worktreeReveal }),
       });
     });
   });

@@ -14,7 +14,9 @@ const fs = require('fs');
 const path = require('path');
 
 const ROOT = process.env.ATLAS_ROOT || path.join(process.env.HOME, 'Developer');
-const DATA_DIR = path.join(__dirname, 'data');
+// ATLAS_DATA keeps scanner tests hermetic and mirrors server.js. Production
+// scans continue to use the repo-local data directory.
+const DATA_DIR = process.env.ATLAS_DATA || path.join(__dirname, 'data');
 const OUT = path.join(DATA_DIR, 'inventory.json');
 const IDENTITY = path.join(DATA_DIR, 'identity.json');
 
@@ -86,6 +88,7 @@ const GIT_PROBE = `
 cd "$1" 2>/dev/null || exit 0
 export GIT_PAGER=cat
 echo "head=$(git rev-parse HEAD 2>/dev/null)"
+echo "commonDir=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"
 # --all counts every ref this clone knows about. Counting HEAD alone reports
 # whatever branch happens to be checked out, which is not a property of the project.
 echo "commits=$(git rev-list --count --all 2>/dev/null)"
@@ -153,6 +156,52 @@ function probeRepo(dir) {
   }
 
   return { kv, authors, churnByEmail };
+}
+
+/* Linked worktrees are branches of one local clone, not additional projects.
+ * They share a common Git directory (object database, refs, and remotes), while
+ * genuinely independent clones have different common directories even when
+ * they point at the same GitHub slug. Keep one representative per common dir
+ * and retain the worktree-specific state for inspection in the detail panel. */
+function collapseLinkedWorktrees(discovered) {
+  const byCommonDir = new Map();
+  for (const local of discovered) {
+    const identity = local.commonDir || `path:${local.absPath}`;
+    if (!byCommonDir.has(identity)) byCommonDir.set(identity, []);
+    byCommonDir.get(identity).push(local);
+  }
+
+  const collapsed = [];
+  for (const group of byCommonDir.values()) {
+    group.sort((a, b) => {
+      const aMain = isDirectory(path.join(a.absPath, '.git'));
+      const bMain = isDirectory(path.join(b.absPath, '.git'));
+      return (bMain - aMain) || a.path.localeCompare(b.path);
+    });
+
+    const representative = group[0];
+    const worktrees = group.map((local) => ({
+      path: local.path,
+      absPath: local.absPath,
+      branch: local.branch,
+      head: local.head,
+      commitsHead: local.commitsHead,
+      dirtyFiles: local.dirtyFiles,
+    }));
+
+    collapsed.push({
+      ...representative,
+      worktreeCount: worktrees.length,
+      worktrees,
+      // Dirty changes live in each checkout rather than the shared Git dir.
+      dirtyFiles: worktrees.reduce((sum, wt) => sum + wt.dirtyFiles, 0),
+    });
+  }
+  return collapsed;
+}
+
+function isDirectory(p) {
+  try { return fs.statSync(p).isDirectory(); } catch { return false; }
 }
 
 /* ------------------------------------------------------------------ *
@@ -323,7 +372,7 @@ function main() {
   const dirs = findRepos(ROOT, 0, []);
   log(`  found ${dirs.length} local git repos`);
 
-  const locals = [];
+  const discoveredLocals = [];
   let done = 0;
   for (const dir of dirs) {
     reportProgress('probing local repos', done, dirs.length);
@@ -333,10 +382,11 @@ function main() {
     if (!probed) continue;
     const { kv, authors, churnByEmail } = probed;
     const remote = parseRemote(kv.origin);
-    locals.push({
+    discoveredLocals.push({
       path: path.relative(ROOT, dir),
       absPath: dir,
       dirName: path.basename(dir),
+      commonDir: kv.commonDir || null,
       remoteUrl: kv.origin || null,
       remote,
       head: kv.head || null,
@@ -355,6 +405,11 @@ function main() {
       authors,
       churnByEmail,
     });
+  }
+  const locals = collapseLinkedWorktrees(discoveredLocals);
+  const linkedWorktrees = discoveredLocals.length - locals.length;
+  if (linkedWorktrees) {
+    log(`  collapsed ${linkedWorktrees} linked worktree${linkedWorktrees === 1 ? '' : 's'} into their primary checkouts`);
   }
 
   // Identity: whose commits count as "mine".
@@ -515,6 +570,8 @@ function main() {
       language: g ? g.language : null,
       topics: g ? g.topics : [],
       diskKB: g ? g.diskKB : null,
+      worktreeCount: l.worktreeCount || 1,
+      worktrees: l.worktrees || [],
     });
   }
 
@@ -573,6 +630,8 @@ function main() {
       language: g.language,
       topics: g.topics,
       diskKB: g.diskKB,
+      worktreeCount: 0,
+      worktrees: [],
     });
   }
 
@@ -619,6 +678,7 @@ function main() {
           localOnly: repos.filter((r) => r.presence === 'local-only').length,
           remoteOnly: repos.filter((r) => r.presence === 'remote-only').length,
           duplicateClones: repos.filter((r) => r.duplicateOf).length,
+          linkedWorktrees,
           openIssues: repos.reduce((s, r) => s + (r.openIssues || 0), 0),
           openPRs: repos.reduce((s, r) => s + (r.openPRs || 0), 0),
         },
